@@ -7,7 +7,7 @@ import type { CommandOutputEvent } from "./exec.ts"
 import { runOpenRalphLauncher, type RunLauncherInput } from "./launcher.ts"
 
 const MAX_OUTPUT_CHARS = 40_000
-const OUTPUT_DIALOG_LINES = 36
+const OUTPUT_DIALOG_LINES = 10
 const OUTPUT_DIALOG_REFRESH_MS = 1000
 const MAX_DIALOG_LINE_LENGTH = 220
 

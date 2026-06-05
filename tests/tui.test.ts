@@ -330,9 +330,9 @@ describe("TUI plugin", () => {
       await new Promise((resolve) => setTimeout(resolve, 1100))
       expect(dialogMessages.length).toBeGreaterThan(initialDialogCount)
       expect(dialogMessages.at(-1)).toMatch(/Elapsed: [1-9]\d*s/)
-      expect(dialogMessages.at(-1)).toContain("line-05")
+      expect(dialogMessages.at(-1)).toContain("line-31")
       expect(dialogMessages.at(-1)).toContain("line-40")
-      expect(dialogMessages.at(-1)).not.toContain("line-04")
+      expect(dialogMessages.at(-1)).not.toContain("line-30")
 
       resolveLauncher?.({
         phase: "plan",
