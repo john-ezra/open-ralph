@@ -39,7 +39,10 @@ The server plugin should inject these commands only for authorized loop child pr
 - Always pass `--dir <project-root>` to child runs.
 - Plan/build child runs use `--dangerously-skip-permissions`.
 - Docker mode is enabled by default; host plan/build commands launch one Docker container and the full loop runs inside it unless `--no-docker` or `docker.enabled: false` is used.
+- Omitted `docker.image` defaults to `ghcr.io/john-ezra/openralph:<installed-package-version>` for Plan/Build runtime execution.
+- `openralph docker build` defaults to the local build tag `openralph:local`.
 - Docker mode runs the container `openralph plan` or `openralph build` CLI entrypoint, never public prompt command replay.
+- Missing default prebuilt images are explicitly pulled before image inspect/version validation; custom configured images are not pulled automatically.
 - Container loops set `OPENRALPH_IN_DOCKER=1` and require token-backed Docker attestation before running.
 - Docker mode disables project OpenCode config and injects config that loads only image-bundled OpenRalph.
 - Docker mode injects a `chrome-devtools` MCP server into the container OpenCode config for browser validation.
@@ -76,7 +79,6 @@ Plugin options:
   "buildModel": "provider/cheap-model",
   "docker": {
     "enabled": true,
-    "image": "openralph:local",
     "maskEnv": true
   }
 }
@@ -124,7 +126,7 @@ Rationale:
 - Docker mode mounts the repo read/write at `/workspace`, mounts OpenCode auth read-only, masks real `.env*` files by default, and does not mount host home, SSH, config, desktop sockets, or the Docker socket.
 - Docker mode does not mount host Git config, SSH keys, GPG material, browser profiles, browser cookies, or desktop sockets.
 - Dockerized OpenRalph Build requires host/project Git `user.name` and `user.email`; OpenRalph passes them through author/committer environment variables, disables commit/tag signing inside Docker, and marks `/workspace` as a safe Git directory.
-- The default `openralph:local` image includes Bun, Node 22, npm/npx/corepack, Git, Bash, curl, Python 3, native build tools, ripgrep, Google Chrome stable, screenshot-friendly fonts, `opencode-ai@1.15.13`, and `chrome-devtools-mcp@1.1.1`.
+- The default prebuilt/local image includes Bun, Node 22, npm/npx/corepack, Git, Bash, curl, Python 3, native build tools, ripgrep, Google Chrome stable, screenshot-friendly fonts, `opencode-ai@1.15.13`, and `chrome-devtools-mcp@1.1.1`.
 - Chrome DevTools MCP runs through `/opt/openralph/bin/chrome-devtools-mcp-wrapper`, which starts isolated headless Chrome on a loopback debugging port with a temporary profile and connects MCP via `--browser-url`.
 - The user still chooses their own isolation strategy and risk level.
 - Recommended operator practice is to run on a dedicated branch or disposable clone.
@@ -137,7 +139,7 @@ Rationale:
 - Do not hardcode specific model IDs.
 - Do not add additional public flags unless they are clearly necessary.
 - Keep project setup guidance lean: validation commands, project conventions, and prioritized plan items matter more than prompt complexity.
-- Do not add every language runtime to the default Docker image; projects needing Go, Rust, Java, databases, or other specialized tooling should extend `openralph:local`.
+- Do not add every language runtime to the default Docker image; projects needing Go, Rust, Java, databases, or other specialized tooling should extend a local/custom image such as `openralph:local`.
 - Keep browser tooling Docker-only in v1; do not make Chrome DevTools MCP a host-side dependency.
 - Public Design/Plan/Build commands are not prompt-backed `cfg.command` entries. The TUI plugin registers only `/ralph`; the server plugin deletes stale public command entries and throws if a stale prompt-backed public command is executed.
 

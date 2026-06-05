@@ -1,5 +1,12 @@
 import { formatLoopArgsForReplay, parseLoopArgs, resolveDockerOptions, validateOptions, type LoopPhase, type OpenRalphOptions, type ParsedLoopArgs } from "./args.ts"
-import { CONTAINER_WORKSPACE, inspectDockerImage as defaultInspectDockerImage, readOpenRalphPackageVersion as defaultReadPackageVersion, runDockerLoop } from "./docker.ts"
+import {
+  CONTAINER_WORKSPACE,
+  inspectDockerImage as defaultInspectDockerImage,
+  pullDockerImage as defaultPullDockerImage,
+  readOpenRalphPackageVersion as defaultReadPackageVersion,
+  resolveRuntimeDockerOptions,
+  runDockerLoop,
+} from "./docker.ts"
 import { commandExists as defaultCommandExists, type CommandOutputEvent, type CommandResult } from "./exec.ts"
 import { requireGitContext } from "./git.ts"
 import { formatSummary, runLoop, type LoopSummary } from "./loop.ts"
@@ -33,6 +40,7 @@ export interface RunLauncherDeps {
   runLoop?: typeof runLoop
   commandExists?: typeof defaultCommandExists
   inspectDockerImage?: typeof defaultInspectDockerImage
+  pullDockerImage?: typeof defaultPullDockerImage
   readPackageVersion?: typeof defaultReadPackageVersion
   trust?: TrustDeps
 }
@@ -57,13 +65,29 @@ export async function runOpenRalphLauncher(input: RunLauncherInput, deps: RunLau
   await preflightCommands(mode, deps.commandExists ?? defaultCommandExists)
 
   if (mode === "docker-host-launch") {
-    const docker = resolveDockerOptions(input.options)
-    const imageStatus = await (deps.inspectDockerImage ?? defaultInspectDockerImage)(docker.image, input.cwd)
-    if (!imageStatus.exists) throw new Error(formatMissingDockerImage(input.phase, parsed, docker.image))
-
     const expectedVersion = (deps.readPackageVersion ?? defaultReadPackageVersion)()
+    const docker = resolveRuntimeDockerOptions(input.options, expectedVersion)
+    const isDefaultImage = input.options.docker?.image === undefined
+    const inspectDockerImage = deps.inspectDockerImage ?? defaultInspectDockerImage
+    let imageStatus = await inspectDockerImage(docker.image, input.cwd)
+
+    if (!imageStatus.exists && isDefaultImage) {
+      const pullResult = await (deps.pullDockerImage ?? defaultPullDockerImage)({
+        image: docker.image,
+        cwd: input.cwd,
+        streamOutput: input.streamOutput,
+        captureOutput: input.captureOutput,
+        onOutput: input.onOutput,
+        signal: input.signal,
+      })
+      if (pullResult.exitCode !== 0) throw new Error(formatDockerPullFailure(input.phase, parsed, docker.image, pullResult))
+      imageStatus = await inspectDockerImage(docker.image, input.cwd)
+    }
+
+    if (!imageStatus.exists) throw new Error(formatMissingDockerImage(input.phase, parsed, docker.image, isDefaultImage))
+
     if (imageStatus.version !== expectedVersion) {
-      throw new Error(formatStaleDockerImage(input.phase, parsed, docker.image, expectedVersion, imageStatus.version))
+      throw new Error(formatStaleDockerImage(input.phase, parsed, docker.image, expectedVersion, imageStatus.version, isDefaultImage))
     }
 
     const git = await (deps.requireGitContext ?? requireGitContext)(input.cwd)
@@ -72,6 +96,7 @@ export async function runOpenRalphLauncher(input: RunLauncherInput, deps: RunLau
       rawArgs: input.rawArgs,
       projectRoot: git.root,
       options: input.options,
+      docker,
       streamOutput: input.streamOutput,
       captureOutput: input.captureOutput,
       onOutput: input.onOutput,
@@ -188,6 +213,26 @@ export function formatDockerFailure(phase: LoopPhase, parsed: ParsedLoopArgs, re
   return lines.join("\n")
 }
 
+export function formatDockerPullFailure(phase: LoopPhase, parsed: ParsedLoopArgs, image: string, result: CommandResult): string {
+  const reason = result.exitCode === null ? `signal ${result.signal ?? "unknown"}` : `exit code ${result.exitCode}`
+  const output = commandOutput(result)
+  const lines = [
+    `OpenRalph could not pull default Docker image ${image}: Docker exited with ${reason}`,
+    "",
+    "OpenRalph did not fall back to host execution because Docker mode is enabled.",
+    "Verify the matching GHCR image is published and public, or fix Docker network/auth access.",
+    "",
+    "For local/offline use, build a local image and configure docker.image to openralph:local:",
+    "  bunx @john.ezra/openralph docker build",
+    "",
+    "If you intentionally want to run this loop on the host, rerun with:",
+    `  ${noDockerCommand(phase, parsed)}`,
+  ]
+
+  if (output) lines.push("", "Docker pull output tail:", tailLines(output, 80))
+  return lines.join("\n")
+}
+
 async function preflightCommands(mode: LauncherMode, exists: typeof defaultCommandExists): Promise<void> {
   const required = mode === "docker-host-launch" ? ["git", "docker"] : ["git", "opencode"]
   const missing: string[] = []
@@ -212,32 +257,73 @@ function formatMissingCommands(commands: string[]): string {
   ].join("\n")
 }
 
-function formatMissingDockerImage(phase: LoopPhase, parsed: ParsedLoopArgs, image: string): string {
-  return [
+function formatMissingDockerImage(phase: LoopPhase, parsed: ParsedLoopArgs, image: string, isDefaultImage: boolean): string {
+  const lines = [
     `Docker image ${image} was not found.`,
     "",
-    "OpenRalph defaults to Docker mode for safer loop execution and Docker runs with --pull=never.",
-    "Build the local image with:",
-    "  bunx @john-ezra/openralph docker build",
+  ]
+
+  if (isDefaultImage) {
+    lines.push(
+      "OpenRalph defaults to a versioned prebuilt Docker image, but the image was still missing after docker pull.",
+      "Verify the matching GHCR image is published and public.",
+      "For local/offline use, build a local image and configure docker.image to openralph:local:",
+    )
+  } else {
+    lines.push(
+      "Custom configured Docker images are user-managed and are not pulled automatically.",
+      "Build or pull the configured image manually.",
+      "For the local OpenRalph image, run:",
+    )
+  }
+
+  lines.push(
+    "  bunx @john.ezra/openralph docker build",
     "",
     "If you intentionally want to run this loop on the host, rerun with:",
     `  ${noDockerCommand(phase, parsed)}`,
-  ].join("\n")
+  )
+  return lines.join("\n")
 }
 
-function formatStaleDockerImage(phase: LoopPhase, parsed: ParsedLoopArgs, image: string, expectedVersion: string, imageVersion: string | undefined): string {
-  return [
+function formatStaleDockerImage(
+  phase: LoopPhase,
+  parsed: ParsedLoopArgs,
+  image: string,
+  expectedVersion: string,
+  imageVersion: string | undefined,
+  isDefaultImage: boolean,
+): string {
+  const lines = [
     `Docker image ${image} is stale or was built by an older OpenRalph version.`,
     "",
     `Installed OpenRalph: ${expectedVersion}`,
     `Docker image OpenRalph: ${imageVersion ?? "unknown"}`,
     "",
-    "Rebuild the local image with:",
-    "  bunx @john-ezra/openralph docker build",
+  ]
+
+  if (isDefaultImage) {
+    lines.push(
+      "Remove the stale local copy and rerun so OpenRalph can pull the matching prebuilt image:",
+      `  docker rmi ${image}`,
+      "",
+      "For local/offline use, build a local image and configure docker.image to openralph:local:",
+      "  bunx @john.ezra/openralph docker build",
+    )
+  } else {
+    lines.push(
+      "Build or pull the configured image manually.",
+      "For local OpenRalph image builds:",
+      "  bunx @john.ezra/openralph docker build",
+    )
+  }
+
+  lines.push(
     "",
     "If you intentionally want to run this loop on the host, rerun with:",
     `  ${noDockerCommand(phase, parsed)}`,
-  ].join("\n")
+  )
+  return lines.join("\n")
 }
 
 function noDockerCommand(phase: LoopPhase, parsed: ParsedLoopArgs): string {

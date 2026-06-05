@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@john-ezra/openralph",
+      "name": "@john.ezra/openralph",
       "devDependencies": {
         "@opencode-ai/plugin": "1.15.13",
         "@types/bun": "latest",

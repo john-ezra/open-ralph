@@ -8,30 +8,29 @@ OpenRalph is a light opencode plugin/package that implements the Ralph workflow 
 
 ## Installation
 
-OpenRalph is distributed as the npm package `@john-ezra/openralph`. OpenRalph itself stays Bun/TypeScript-native. Direct package execution through `bunx @john-ezra/openralph ...` or an installed `openralph` binary requires Bun.
+OpenRalph is distributed as the npm package `@john.ezra/openralph`. OpenRalph itself stays Bun/TypeScript-native. Direct package execution through `bunx @john.ezra/openralph ...` or an installed `openralph` binary requires Bun.
 
 The normal install path is opencode's built-in plugin installer:
 
 1. Open opencode in the target project.
 2. Run `Install plugin` from the command palette/plugins UI.
-3. Enter `@john-ezra/openralph` at the `npm package name` prompt.
+3. Enter `@john.ezra/openralph` at the `npm package name` prompt.
 4. Leave scope as `local` for a project install, or press `Tab` to toggle to `global`.
-5. Build the default Docker image with `bunx @john-ezra/openralph docker build`.
-6. Restart opencode if needed.
-7. Run `/ralph`.
+5. Restart opencode if needed.
+6. Run `/ralph`.
 
 CLI equivalent for non-TUI users:
 
 ```bash
-opencode plugin @john-ezra/openralph
-opencode plugin --global @john-ezra/openralph
+opencode plugin @john.ezra/openralph
+opencode plugin --global @john.ezra/openralph
 ```
 
 The opencode installer installs the npm package into opencode's plugin cache, detects both OpenRalph server and TUI targets, and patches the matching config files automatically. Local scope writes under `<worktree>/.opencode/` when run in a Git worktree; global scope writes under `~/.config/opencode/`.
 
 ## Advanced Manual Config
 
-Manual config is only needed when you want to bypass opencode's plugin installer or edit plugin options directly. Use `@john-ezra/openralph` for both server and TUI config; do not configure `@john-ezra/openralph/tui` as the plugin name.
+Manual config is only needed when you want to bypass opencode's plugin installer or edit plugin options directly. Use `@john.ezra/openralph` for both server and TUI config; do not configure `@john.ezra/openralph/tui` as the plugin name.
 
 Server plugin in `opencode.json`:
 
@@ -40,14 +39,13 @@ Server plugin in `opencode.json`:
   "$schema": "https://opencode.ai/config.json",
   "plugin": [
     [
-      "@john-ezra/openralph",
+      "@john.ezra/openralph",
       {
         "defineModel": "provider/heavy-model",
         "planModel": "provider/cheap-model",
         "buildModel": "provider/cheap-model",
         "docker": {
           "enabled": true,
-          "image": "openralph:local",
           "maskEnv": true
         }
       }
@@ -63,14 +61,13 @@ TUI plugin in `tui.json`:
   "$schema": "https://opencode.ai/tui.json",
   "plugin": [
     [
-      "@john-ezra/openralph",
+      "@john.ezra/openralph",
       {
         "defineModel": "provider/heavy-model",
         "planModel": "provider/cheap-model",
         "buildModel": "provider/cheap-model",
         "docker": {
           "enabled": true,
-          "image": "openralph:local",
           "maskEnv": true
         }
       }
@@ -81,18 +78,18 @@ TUI plugin in `tui.json`:
 
 All model options are optional. Command `--model` values override plugin options. For Plan and Build runs started from `/ralph`, OpenRalph uses the current TUI session's selected model as a final fallback before launching fresh child runs. Direct CLI/headless runs have no TUI-selected model available; if no model is resolved there, OpenRalph omits `--model` and lets opencode use its default.
 
-Server and TUI plugin options use the same shape. Direct CLI/headless runs can pass the same launcher options through `OPENRALPH_OPTIONS_JSON`; without that env var, `openralph plan/build` uses default options, including Docker enabled with image `openralph:local` and `.env*` masking enabled.
+Server and TUI plugin options use the same shape. Direct CLI/headless runs can pass the same launcher options through `OPENRALPH_OPTIONS_JSON`; without that env var, `openralph plan/build` uses default options, including Docker enabled with the versioned prebuilt image `ghcr.io/john-ezra/openralph:<installed-package-version>` and `.env*` masking enabled.
 
 ## Docker Mode
 
-Docker mode is the default for Plan and Build. Plan and Build from `/ralph`, `openralph plan`, and `openralph build` launch one Docker container from the host and run the full Ralph loop inside it through the container `openralph` CLI entrypoint. Docker uses `--pull=never`, so build the default image locally before running Dockerized loops. The default local image build supports `linux/amd64` and `linux/arm64`; arm64 images use Debian Chromium for browser validation instead of Google Chrome. OpenRalph checks the image's stamped package version before launch and refuses stale or unlabelled images; rebuild the image after updating OpenRalph. To intentionally run on the host, pass `--no-docker` for that run or set `"docker": { "enabled": false }` in plugin options.
+Docker mode is the default for Plan and Build. Plan and Build from `/ralph`, `openralph plan`, and `openralph build` launch one Docker container from the host and run the full Ralph loop inside it through the container `openralph` CLI entrypoint. When `docker.image` is omitted, OpenRalph uses the versioned prebuilt image `ghcr.io/john-ezra/openralph:<installed-package-version>` and explicitly runs `docker pull` if that default image is missing locally. The actual loop container still runs with `--pull=never`. OpenRalph checks the image's stamped package version before launch and refuses stale or unlabelled images. To intentionally run on the host, pass `--no-docker` for that run or set `"docker": { "enabled": false }` in plugin options.
 
 On Windows, run OpenRalph from WSL2 with Docker Desktop's WSL integration enabled. Native PowerShell/CMD execution is not a supported path because OpenRalph's CLI and Docker bind mounts assume a Linux-like shell and filesystem paths.
 
-If you installed through opencode's plugin installer, the package bin may not be available on your shell `PATH`. Build the image with direct package execution:
+Local, offline, and project-custom images remain supported. `openralph docker build` defaults to the local tag `openralph:local`; configure `"docker": { "image": "openralph:local" }` to use it instead of the prebuilt image. If you installed through opencode's plugin installer, the package bin may not be available on your shell `PATH`. Build the local image with direct package execution:
 
 ```bash
-bunx @john-ezra/openralph docker build
+bunx @john.ezra/openralph docker build
 ```
 
 If the `openralph` binary is already on `PATH`, such as from a global package install, AUR/Omarchy install, or local checkout, you can use:
@@ -101,10 +98,10 @@ If the `openralph` binary is already on `PATH`, such as from a global package in
 openralph docker build
 ```
 
-Use a custom tag for the default image if desired:
+Use a custom tag if desired:
 
 ```bash
-bunx @john-ezra/openralph docker build --tag openralph:rust
+bunx @john.ezra/openralph docker build --tag openralph:rust
 ```
 
 Projects can extend the local image with a small Dockerfile:
@@ -127,9 +124,9 @@ Build it with Docker directly:
 docker build -f Dockerfile.openralph -t openralph:rust .
 ```
 
-Then point plugin options at that tag with `"docker": { "enabled": true, "image": "openralph:rust" }`.
+Then point plugin options at that tag with `"docker": { "enabled": true, "image": "openralph:rust" }`. Custom configured images are user-managed and are not pulled automatically by OpenRalph.
 
-The default image includes `opencode-ai@1.15.13`, Bun, Node 22, npm/npx/corepack, Git, Bash, curl, Python 3, native build tools, ripgrep, screenshot-friendly fonts, `chrome-devtools-mcp@1.1.1`, and a browser for validation. It installs Google Chrome stable on `linux/amd64` and Debian Chromium on `linux/arm64`.
+The prebuilt and locally built default image supports `linux/amd64` and `linux/arm64` and includes `opencode-ai@1.15.13`, Bun, Node 22, npm/npx/corepack, Git, Bash, curl, Python 3, native build tools, ripgrep, screenshot-friendly fonts, `chrome-devtools-mcp@1.1.1`, and a browser for validation. It installs Google Chrome stable on `linux/amd64` and Debian Chromium on `linux/arm64`.
 
 Restart opencode after installing or changing `opencode.json`, `tui.json`, or plugin files. opencode loads plugin/config files only at startup.
 

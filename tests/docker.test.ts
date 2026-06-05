@@ -13,6 +13,7 @@ import {
   detectMaskableEnvFiles,
   IMAGE_PLUGIN_PATH,
   OPENRALPH_IMAGE_VERSION_LABEL,
+  resolveRuntimeDockerOptions,
   shouldMaskEnvFile,
 } from "../src/docker.ts"
 
@@ -162,6 +163,24 @@ describe("buildDockerImageArgs", () => {
   })
 })
 
+describe("resolveRuntimeDockerOptions", () => {
+  test("defaults runtime Docker to the matching published image", () => {
+    expect(resolveRuntimeDockerOptions({}, "1.2.3")).toEqual({
+      enabled: true,
+      image: "ghcr.io/john-ezra/openralph:1.2.3",
+      maskEnv: true,
+    })
+  })
+
+  test("preserves explicit Docker image overrides", () => {
+    expect(resolveRuntimeDockerOptions({ docker: { image: "openralph:local" } }, "1.2.3")).toEqual({
+      enabled: true,
+      image: "openralph:local",
+      maskEnv: true,
+    })
+  })
+})
+
 describe("Dockerfile browser tooling", () => {
   test("pins Chrome DevTools MCP in the image", async () => {
     const dockerfile = await readFile(join(import.meta.dir, "..", "container", "Dockerfile"), "utf8")
@@ -199,6 +218,18 @@ describe("Dockerfile browser tooling", () => {
     expect(wrapper).toContain('ready="true"')
     expect(wrapper).toContain('[ "${ready}" != "true" ]')
     expect(wrapper).toContain("chrome-devtools-mcp --browser-url=")
+  })
+})
+
+describe("Docker image workflow", () => {
+  test("publishes matching versioned GHCR images", async () => {
+    const workflow = await readFile(join(import.meta.dir, "..", ".github", "workflows", "docker-image.yml"), "utf8")
+
+    expect(workflow).toContain("ghcr.io/john-ezra/openralph")
+    expect(workflow).toContain("linux/amd64,linux/arm64")
+    expect(workflow).toContain("org.openralph.version=${{ steps.version.outputs.version }}")
+    expect(workflow).toContain('EXPECTED_TAG="v${VERSION}"')
+    expect(workflow).not.toContain(":latest")
   })
 })
 
