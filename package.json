@@ -1,0 +1,50 @@
+{
+  "name": "@john-ezra/openralph",
+  "version": "0.1.2",
+  "type": "module",
+  "description": "Light opencode plugin for the Ralph workflow.",
+  "license": "MIT",
+  "main": "./src/plugin.ts",
+  "exports": {
+    ".": "./src/plugin.ts",
+    "./server": "./src/plugin.ts",
+    "./tui": "./src/tui.ts",
+    "./cli": "./src/cli.ts",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "openralph": "bin/openralph"
+  },
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "files": [
+    ".dockerignore",
+    "AGENTS.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "PROMPT_build.md",
+    "PROMPT_plan.md",
+    "bin/openralph",
+    "bun.lock",
+    "container/",
+    "src/",
+    "tsconfig.json"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "release:check": "bun src/release-check.ts",
+    "validate": "bun run typecheck && bun test && bun run release:check",
+    "prepublishOnly": "bun run validate"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "1.15.13",
+    "@types/bun": "latest",
+    "typescript": "latest"
+  }
+}

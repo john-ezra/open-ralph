@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+profile="$(mktemp -d "${TMPDIR:-/tmp}/openralph-chrome-profile.XXXXXX")"
+log_file="${TMPDIR:-/tmp}/openralph-chrome-$$.log"
+chrome_pid=""
+port=""
+ready="false"
+
+cleanup() {
+  if [ -n "${chrome_pid}" ] && kill -0 "${chrome_pid}" 2>/dev/null; then
+    kill "${chrome_pid}" 2>/dev/null || true
+    wait "${chrome_pid}" 2>/dev/null || true
+  fi
+  rm -rf "${profile}" 2>/dev/null || true
+}
+
+trap cleanup EXIT INT TERM
+
+google-chrome \
+  --headless \
+  --disable-gpu \
+  --no-sandbox \
+  --remote-debugging-address=127.0.0.1 \
+  --remote-debugging-port=0 \
+  --user-data-dir="${profile}" \
+  --window-size=1440,1000 \
+  about:blank >"${log_file}" 2>&1 &
+chrome_pid=$!
+
+port_file="${profile}/DevToolsActivePort"
+attempts=0
+while [ "${attempts}" -lt 100 ]; do
+  attempts=$((attempts + 1))
+  if [ -s "${port_file}" ]; then
+    IFS= read -r port <"${port_file}"
+    if [ -n "${port}" ] && curl -fsS "http://127.0.0.1:${port}/json/version" >/dev/null 2>&1; then
+      ready="true"
+      break
+    fi
+  fi
+
+  if ! kill -0 "${chrome_pid}" 2>/dev/null; then
+    sed -n '1,120p' "${log_file}" >&2 || true
+    exit 1
+  fi
+
+  sleep 0.1
+done
+
+if [ "${ready}" != "true" ]; then
+  sed -n '1,120p' "${log_file}" >&2 || true
+  printf 'Chrome did not start remote debugging for Chrome DevTools MCP.\n' >&2
+  exit 1
+fi
+
+chrome-devtools-mcp --browser-url="http://127.0.0.1:${port}" "$@"
