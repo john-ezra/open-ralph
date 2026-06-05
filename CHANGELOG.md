@@ -6,6 +6,8 @@ The format is based on Keep a Changelog, and this project uses semantic versioni
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-06-05
+
 ### Added
 
 - Heartbeat output while Plan/Build child `opencode run` processes are quiet, without adding heartbeat lines to iteration transcripts.
