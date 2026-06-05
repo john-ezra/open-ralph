@@ -17,6 +17,7 @@ export interface RunLoopInput {
   streamOutput?: boolean
   onOutput?: (event: CommandOutputEvent) => void
   signal?: AbortSignal
+  heartbeatIntervalMs?: number
 }
 
 export interface LoopSummary {
@@ -29,6 +30,8 @@ export interface LoopSummary {
   warnings: string[]
   artifacts: string
 }
+
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000
 
 export async function runLoop(input: RunLoopInput): Promise<LoopSummary> {
   const args = parseLoopArgs(input.phase, input.rawArgs)
@@ -59,12 +62,15 @@ export async function runLoop(input: RunLoopInput): Promise<LoopSummary> {
     stopRequested: false,
     forceStopRequested: false,
     activeChild: undefined as ReturnType<typeof startCommand>["child"] | undefined,
+    activeHeartbeat: undefined as ChildHeartbeat | undefined,
   }
 
   const requestStop = (force: boolean, announce: boolean) => {
     if (!state.stopRequested) {
       state.stopRequested = true
       state.activeChild?.kill("SIGINT")
+      state.activeHeartbeat?.stop()
+      state.activeHeartbeat = undefined
       if (!force && announce) process.stderr.write("\nOpenRalph stop requested. Waiting for active child to exit...\n")
       return
     }
@@ -72,6 +78,8 @@ export async function runLoop(input: RunLoopInput): Promise<LoopSummary> {
     if (force) {
       state.forceStopRequested = true
       state.activeChild?.kill("SIGKILL")
+      state.activeHeartbeat?.stop()
+      state.activeHeartbeat = undefined
       if (announce) process.stderr.write("\nOpenRalph force stop requested. Terminating active child...\n")
     }
   }
@@ -141,32 +149,65 @@ export async function runLoop(input: RunLoopInput): Promise<LoopSummary> {
       state.launched += 1
       const iterationArtifacts = await startIterationArtifacts(artifacts, state.launched, childArgs)
 
-      let result: CommandResult
+      let result: CommandResult | undefined
+      let childError: unknown
+      let activeChild: ReturnType<typeof startCommand>["child"] | undefined
+      let heartbeat: ChildHeartbeat | undefined
+      const stopHeartbeat = () => {
+        heartbeat?.stop()
+        if (state.activeHeartbeat === heartbeat) state.activeHeartbeat = undefined
+      }
+
       try {
         const child = startCommand("opencode", childArgs, {
           cwd: git.root,
           env: loopChild.env,
           streamOutput,
           onOutput: (event) => {
+            heartbeat?.recordOutput()
             iterationArtifacts.recordOutput(event)
             input.onOutput?.(event)
           },
           signal: input.signal,
         })
+        activeChild = child.child
         state.activeChild = child.child
+        child.child.once("spawn", () => {
+          if (state.activeChild !== child.child || state.stopRequested || input.signal?.aborted) return
+          heartbeat = startChildHeartbeat({
+            phase: input.phase,
+            iteration: state.launched,
+            intervalMs: input.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS,
+            streamOutput,
+            onOutput: input.onOutput,
+          })
+          state.activeHeartbeat = heartbeat
+        })
         result = await child.result
       } catch (error) {
-        state.activeChild = undefined
-        await iterationArtifacts.finish({ error })
+        childError = error
+      } finally {
+        stopHeartbeat()
+        if (state.activeChild === activeChild) state.activeChild = undefined
+      }
+
+      if (childError !== undefined) {
+        await iterationArtifacts.finish({ error: childError })
         if (state.stopRequested || state.forceStopRequested || input.signal?.aborted) {
           return finish("stopped", `stopped by user after ${state.launched} launched iteration(s)`)
         }
 
-        const failed = recordFailure(input.phase, state, `child process failed to start: ${formatError(error)}`, streamOutput)
+        const failed = recordFailure(input.phase, state, `child process failed to start: ${formatError(childError)}`, streamOutput)
         if (failed) return finish("failed", failed)
         continue
       }
-      state.activeChild = undefined
+
+      if (result === undefined) {
+        await iterationArtifacts.finish({ error: "child process ended without a result" })
+        const failed = recordFailure(input.phase, state, "child process ended without a result", streamOutput)
+        if (failed) return finish("failed", failed)
+        continue
+      }
 
       const output = `${result.stdout}\n${result.stderr}`
 
@@ -249,9 +290,65 @@ export async function runLoop(input: RunLoopInput): Promise<LoopSummary> {
 
     return finish("stopped", `stopped by user after ${state.launched} launched iteration(s)`)
   } finally {
+    state.activeHeartbeat?.stop()
+    state.activeHeartbeat = undefined
     process.off("SIGINT", onSigint)
     input.signal?.removeEventListener("abort", onAbort)
     await loopChild.cleanup()
+  }
+}
+
+interface ChildHeartbeat {
+  recordOutput: () => void
+  stop: () => void
+}
+
+function startChildHeartbeat(input: {
+  phase: LoopPhase
+  iteration: number
+  intervalMs: number
+  streamOutput: boolean
+  onOutput?: (event: CommandOutputEvent) => void
+}): ChildHeartbeat {
+  if (!input.streamOutput && !input.onOutput) {
+    return { recordOutput: () => {}, stop: () => {} }
+  }
+
+  const intervalMs = Number.isFinite(input.intervalMs) && input.intervalMs > 0 ? input.intervalMs : DEFAULT_HEARTBEAT_INTERVAL_MS
+  const iteration = formatIteration(input.iteration)
+  const startedAt = Date.now()
+  let lastOutputAt = startedAt
+  let stopped = false
+
+  const emit = (message: string) => {
+    const chunk = `${message}\n`
+    if (input.streamOutput) process.stderr.write(chunk)
+    input.onOutput?.({ stream: "stderr", chunk })
+  }
+
+  emit(`OpenRalph ${input.phase} ${iteration} started. Waiting for opencode output...`)
+
+  const timer = setInterval(() => {
+    if (stopped) return
+    const now = Date.now()
+    const quietMs = now - lastOutputAt
+    if (quietMs < intervalMs) return
+
+    emit(
+      `OpenRalph ${input.phase} ${iteration} still running after ${formatDuration(now - startedAt)} (${formatDuration(quietMs)} since last output).`,
+    )
+  }, intervalMs)
+  timer.unref?.()
+
+  return {
+    recordOutput: () => {
+      lastOutputAt = Date.now()
+    },
+    stop: () => {
+      if (stopped) return
+      stopped = true
+      clearInterval(timer)
+    },
   }
 }
 
@@ -285,6 +382,21 @@ function buildChildArgs(phase: LoopPhase, projectRoot: string, model: string | u
 
   if (model) args.push("--model", model)
   return args
+}
+
+function formatIteration(index: number): string {
+  return `iter-${String(index).padStart(3, "0")}`
+}
+
+function formatDuration(milliseconds: number): string {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000))
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`
+  if (minutes > 0) return `${minutes}m ${seconds}s`
+  return `${seconds}s`
 }
 
 function hostModeWarning(mode: LoopExecutionMode | undefined): string | undefined {

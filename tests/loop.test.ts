@@ -2,8 +2,44 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os"
 import { delimiter, join } from "node:path"
 import { describe, expect, test } from "bun:test"
-import { runCommand, type CommandResult } from "../src/exec.ts"
+import { runCommand, type CommandOutputEvent, type CommandResult } from "../src/exec.ts"
 import { runLoop, type LoopSummary } from "../src/loop.ts"
+
+describe("runLoop heartbeat", () => {
+  test("emits heartbeat without adding it to child artifacts", async () => {
+    await withFakeOpenCode("plan-delayed-output", async (root) => {
+      const output: CommandOutputEvent[] = []
+      const summary = await runLoop({
+        phase: "plan",
+        rawArgs: "1",
+        cwd: root,
+        options: {},
+        streamOutput: false,
+        onOutput: (event) => output.push(event),
+        heartbeatIntervalMs: 10,
+      })
+
+      expect(summary.status).toBe("complete")
+
+      const chunks = output.map((event) => event.chunk)
+      const startedIndex = chunks.findIndex((chunk) => chunk.includes("OpenRalph plan iter-001 started. Waiting for opencode output..."))
+      const heartbeatIndex = chunks.findIndex((chunk) => chunk.includes("OpenRalph plan iter-001 still running"))
+      const childIndex = chunks.findIndex((chunk) => chunk.includes("delayed plan output"))
+
+      expect(startedIndex).toBeGreaterThanOrEqual(0)
+      expect(heartbeatIndex).toBeGreaterThanOrEqual(0)
+      expect(childIndex).toBeGreaterThanOrEqual(0)
+      expect(startedIndex).toBeLessThan(childIndex)
+      expect(heartbeatIndex).toBeLessThan(childIndex)
+      expect(output[heartbeatIndex]?.stream).toBe("stderr")
+
+      const text = await readFile(join(summary.artifacts, "iter-001.txt"), "utf8")
+      expect(text).toContain("delayed plan output")
+      expect(text).toContain("RALPH_PLAN_COMPLETE")
+      expect(text).not.toContain("OpenRalph plan iter-001")
+    })
+  })
+})
 
 describe("runLoop build completion", () => {
   test("completes without tagging when no work remains and the worktree is clean", async () => {
@@ -131,6 +167,11 @@ async function writeFakeOpenCode(path: string): Promise<void> {
 set -euo pipefail
 
 case "\${OPENRALPH_TEST_SCENARIO:-}" in
+  plan-delayed-output)
+    sleep 0.2
+    printf 'delayed plan output\n'
+    printf 'RALPH_PLAN_COMPLETE\n'
+    ;;
   complete-clean)
     printf 'RALPH_COMPLETE\n'
     ;;
