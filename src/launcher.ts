@@ -1,5 +1,5 @@
 import { formatLoopArgsForReplay, parseLoopArgs, resolveDockerOptions, validateOptions, type LoopPhase, type OpenRalphOptions, type ParsedLoopArgs } from "./args.ts"
-import { CONTAINER_WORKSPACE, dockerImageExists as defaultDockerImageExists, runDockerLoop } from "./docker.ts"
+import { CONTAINER_WORKSPACE, inspectDockerImage as defaultInspectDockerImage, readOpenRalphPackageVersion as defaultReadPackageVersion, runDockerLoop } from "./docker.ts"
 import { commandExists as defaultCommandExists, type CommandOutputEvent, type CommandResult } from "./exec.ts"
 import { requireGitContext } from "./git.ts"
 import { formatSummary, runLoop, type LoopSummary } from "./loop.ts"
@@ -32,7 +32,8 @@ export interface RunLauncherDeps {
   runDockerLoop?: typeof runDockerLoop
   runLoop?: typeof runLoop
   commandExists?: typeof defaultCommandExists
-  dockerImageExists?: typeof defaultDockerImageExists
+  inspectDockerImage?: typeof defaultInspectDockerImage
+  readPackageVersion?: typeof defaultReadPackageVersion
   trust?: TrustDeps
 }
 
@@ -57,8 +58,13 @@ export async function runOpenRalphLauncher(input: RunLauncherInput, deps: RunLau
 
   if (mode === "docker-host-launch") {
     const docker = resolveDockerOptions(input.options)
-    const imageExists = await (deps.dockerImageExists ?? defaultDockerImageExists)(docker.image, input.cwd)
-    if (!imageExists) throw new Error(formatMissingDockerImage(input.phase, parsed, docker.image))
+    const imageStatus = await (deps.inspectDockerImage ?? defaultInspectDockerImage)(docker.image, input.cwd)
+    if (!imageStatus.exists) throw new Error(formatMissingDockerImage(input.phase, parsed, docker.image))
+
+    const expectedVersion = (deps.readPackageVersion ?? defaultReadPackageVersion)()
+    if (imageStatus.version !== expectedVersion) {
+      throw new Error(formatStaleDockerImage(input.phase, parsed, docker.image, expectedVersion, imageStatus.version))
+    }
 
     const git = await (deps.requireGitContext ?? requireGitContext)(input.cwd)
     const result = await (deps.runDockerLoop ?? runDockerLoop)({
@@ -212,6 +218,21 @@ function formatMissingDockerImage(phase: LoopPhase, parsed: ParsedLoopArgs, imag
     "",
     "OpenRalph defaults to Docker mode for safer loop execution and Docker runs with --pull=never.",
     "Build the local image with:",
+    "  bunx @john-ezra/openralph docker build",
+    "",
+    "If you intentionally want to run this loop on the host, rerun with:",
+    `  ${noDockerCommand(phase, parsed)}`,
+  ].join("\n")
+}
+
+function formatStaleDockerImage(phase: LoopPhase, parsed: ParsedLoopArgs, image: string, expectedVersion: string, imageVersion: string | undefined): string {
+  return [
+    `Docker image ${image} is stale or was built by an older OpenRalph version.`,
+    "",
+    `Installed OpenRalph: ${expectedVersion}`,
+    `Docker image OpenRalph: ${imageVersion ?? "unknown"}`,
+    "",
+    "Rebuild the local image with:",
     "  bunx @john-ezra/openralph docker build",
     "",
     "If you intentionally want to run this loop on the host, rerun with:",

@@ -6,6 +6,10 @@ The format is based on Keep a Changelog, and this project uses semantic versioni
 
 ## [Unreleased]
 
+### Changed
+
+- Docker image builds now stamp the OpenRalph package version, and Dockerized Plan/Build refuse to run stale or unlabelled `openralph:local` images.
+
 ## [0.1.2] - 2026-06-04
 
 ### Changed

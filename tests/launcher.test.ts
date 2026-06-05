@@ -16,7 +16,9 @@ const hostSummary: LoopSummary = {
 
 const noContainer = { containerEvidence: async () => false }
 const allCommandsExist = async () => true
-const allImagesExist = async () => true
+const currentVersion = "1.2.3"
+const currentImage = async () => ({ exists: true, version: currentVersion })
+const readCurrentVersion = () => currentVersion
 
 describe("resolveLauncherMode", () => {
   test("resolves Docker host launch", async () => {
@@ -73,7 +75,8 @@ describe("runOpenRalphLauncher", () => {
         env: {},
         trust: noContainer,
         commandExists: allCommandsExist,
-        dockerImageExists: allImagesExist,
+        inspectDockerImage: currentImage,
+        readPackageVersion: readCurrentVersion,
         requireGitContext: async () => ({ root: "/repo", branch: "feature/test" }),
         runDockerLoop: async (input) => {
           dockerCalled = true
@@ -114,7 +117,6 @@ describe("runOpenRalphLauncher", () => {
         env: {},
         trust: noContainer,
         commandExists: allCommandsExist,
-        dockerImageExists: allImagesExist,
         runDockerLoop: async () => {
           dockerCalled = true
           throw new Error("unexpected Docker call")
@@ -197,10 +199,10 @@ describe("runOpenRalphLauncher", () => {
           env: {},
           trust: noContainer,
           commandExists: allCommandsExist,
-          dockerImageExists: async (image, cwd) => {
+          inspectDockerImage: async (image, cwd) => {
             expect(image).toBe("openralph:local")
             expect(cwd).toBe("/repo")
-            return false
+            return { exists: false }
           },
           runDockerLoop: async () => {
             dockerCalled = true
@@ -213,6 +215,48 @@ describe("runOpenRalphLauncher", () => {
     expect(dockerCalled).toBe(false)
   })
 
+  test("reports stale Docker image before running the container", async () => {
+    let dockerCalled = false
+
+    await expect(
+      runOpenRalphLauncher(
+        { phase: "plan", rawArgs: "5", cwd: "/repo", options: {} },
+        {
+          env: {},
+          trust: noContainer,
+          commandExists: allCommandsExist,
+          inspectDockerImage: async (image, cwd) => {
+            expect(image).toBe("openralph:local")
+            expect(cwd).toBe("/repo")
+            return { exists: true, version: "1.2.2" }
+          },
+          readPackageVersion: readCurrentVersion,
+          runDockerLoop: async () => {
+            dockerCalled = true
+            throw new Error("unexpected Docker call")
+          },
+        },
+      ),
+    ).rejects.toThrow("Docker image openralph:local is stale")
+
+    expect(dockerCalled).toBe(false)
+  })
+
+  test("reports unlabelled Docker image before running the container", async () => {
+    await expect(
+      runOpenRalphLauncher(
+        { phase: "build", rawArgs: "1", cwd: "/repo", options: {} },
+        {
+          env: {},
+          trust: noContainer,
+          commandExists: allCommandsExist,
+          inspectDockerImage: async () => ({ exists: true }),
+          readPackageVersion: readCurrentVersion,
+        },
+      ),
+    ).rejects.toThrow("Docker image OpenRalph: unknown")
+  })
+
   test("reports Docker failure without host fallback", async () => {
     let hostCalled = false
 
@@ -223,7 +267,8 @@ describe("runOpenRalphLauncher", () => {
           env: {},
           trust: noContainer,
           commandExists: allCommandsExist,
-          dockerImageExists: allImagesExist,
+          inspectDockerImage: currentImage,
+          readPackageVersion: readCurrentVersion,
           requireGitContext: async () => ({ root: "/repo", branch: "feature/test" }),
           runDockerLoop: async () => ({
             exitCode: 2,
@@ -250,7 +295,8 @@ describe("runOpenRalphLauncher", () => {
           env: {},
           trust: noContainer,
           commandExists: allCommandsExist,
-          dockerImageExists: allImagesExist,
+          inspectDockerImage: currentImage,
+          readPackageVersion: readCurrentVersion,
           requireGitContext: async () => ({ root: "/repo", branch: "feature/test" }),
           runDockerLoop: async () => ({
             exitCode: 0,

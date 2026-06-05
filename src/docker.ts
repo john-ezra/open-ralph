@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto"
+import { readFileSync } from "node:fs"
 import { access, mkdtemp, readdir, rm, writeFile } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
 import { basename, join, relative, sep } from "node:path"
@@ -22,6 +23,7 @@ export const IMAGE_PLUGIN_PATH = "file:///opt/openralph/src/plugin.ts"
 export const CHROME_DEVTOOLS_MCP_VERSION = "1.1.1"
 export const CHROME_DEVTOOLS_MCP_PACKAGE = `chrome-devtools-mcp@${CHROME_DEVTOOLS_MCP_VERSION}`
 export const CHROME_DEVTOOLS_MCP_WRAPPER = "/opt/openralph/bin/chrome-devtools-mcp-wrapper"
+export const OPENRALPH_IMAGE_VERSION_LABEL = "org.openralph.version"
 export const CHROME_DEVTOOLS_MCP_COMMAND = [
   CHROME_DEVTOOLS_MCP_WRAPPER,
   "--no-usage-statistics",
@@ -62,6 +64,12 @@ export interface BuildDockerImageArgsInput {
   tag?: string
   noCache?: boolean
   packageRoot?: string
+  version?: string
+}
+
+export interface DockerImageStatus {
+  exists: boolean
+  version?: string
 }
 
 export interface DockerMount {
@@ -170,7 +178,16 @@ export async function runDockerLoop(input: RunDockerLoopInput): Promise<CommandR
 
 export function buildDockerImageArgs(input: BuildDockerImageArgsInput = {}): string[] {
   const packageRoot = input.packageRoot ?? defaultPackageRoot()
-  const args = ["build", "--file", join(packageRoot, "container", "Dockerfile"), "--tag", input.tag ?? DEFAULT_DOCKER_IMAGE]
+  const version = input.version ?? readPackageVersion(packageRoot)
+  const args = [
+    "build",
+    "--file",
+    join(packageRoot, "container", "Dockerfile"),
+    "--tag",
+    input.tag ?? DEFAULT_DOCKER_IMAGE,
+    "--label",
+    `${OPENRALPH_IMAGE_VERSION_LABEL}=${version}`,
+  ]
   if (input.noCache) args.push("--no-cache")
   args.push(packageRoot)
   return args
@@ -188,12 +205,29 @@ export async function buildLocalDockerImage(input: BuildLocalDockerImageInput = 
 }
 
 export async function dockerImageExists(image: string, cwd = process.cwd()): Promise<boolean> {
+  return (await inspectDockerImage(image, cwd)).exists
+}
+
+export async function inspectDockerImage(image: string, cwd = process.cwd()): Promise<DockerImageStatus> {
   const result = await startCommand("docker", ["image", "inspect", image], {
     cwd,
     streamOutput: false,
-    captureOutput: false,
+    captureOutput: true,
   }).result
-  return result.exitCode === 0
+  if (result.exitCode !== 0) return { exists: false }
+
+  try {
+    const parsed = JSON.parse(result.stdout) as unknown
+    const imageConfig = Array.isArray(parsed) ? parsed[0] : undefined
+    const labels = readDockerLabels(imageConfig)
+    return { exists: true, version: labels?.[OPENRALPH_IMAGE_VERSION_LABEL] }
+  } catch {
+    return { exists: true }
+  }
+}
+
+export function readOpenRalphPackageVersion(packageRoot = defaultPackageRoot()): string {
+  return readPackageVersion(packageRoot)
 }
 
 export function buildDockerArgs(input: BuildDockerArgsInput): string[] {
@@ -366,6 +400,29 @@ function defaultAuthPath(): string {
 
 function defaultPackageRoot(): string {
   return join(import.meta.dir, "..")
+}
+
+function readPackageVersion(packageRoot: string): string {
+  const raw = readFileSync(join(packageRoot, "package.json"), "utf8")
+  const parsed = JSON.parse(raw) as unknown
+  if (typeof parsed !== "object" || parsed === null || typeof (parsed as { version?: unknown }).version !== "string") {
+    throw new Error(`OpenRalph package.json at ${packageRoot} does not contain a string version`)
+  }
+  return (parsed as { version: string }).version
+}
+
+function readDockerLabels(value: unknown): Record<string, string> | undefined {
+  if (typeof value !== "object" || value === null) return undefined
+  const config = (value as { Config?: unknown }).Config
+  if (typeof config !== "object" || config === null) return undefined
+  const labels = (config as { Labels?: unknown }).Labels
+  if (typeof labels !== "object" || labels === null) return undefined
+
+  const result: Record<string, string> = {}
+  for (const [key, labelValue] of Object.entries(labels)) {
+    if (typeof labelValue === "string") result[key] = labelValue
+  }
+  return result
 }
 
 async function requireReadableFile(path: string, label: string): Promise<void> {

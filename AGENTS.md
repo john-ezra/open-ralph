@@ -104,8 +104,9 @@ Use tags only after a successful build iteration with a new commit and clean wor
 
 ## Development Git Workflow
 
-- Do not make feature, fix, or improvement changes directly on `main`.
-- Create a short-lived branch before editing, such as `feature/<name>` or `fix/<name>`.
+- All code changes must happen on a short-lived branch, never directly on `main`.
+- Before any file edit or command that can modify project files, run `git branch --show-current` or `git status --short --branch` and confirm the branch is not `main` or `master`.
+- If the current branch is `main` or `master`, stop and create a branch before editing, such as `feature/<name>` or `fix/<name>`.
 - Keep `main` as the integration branch; merge reviewed/validated branch work back into `main`.
 - Push branches for collaboration or backup, then merge to `main` only after validation passes.
 - If accidental local edits happen on `main`, move them to a branch before committing unless the user explicitly approves a direct `main` commit.

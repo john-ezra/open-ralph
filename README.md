@@ -85,7 +85,7 @@ Server and TUI plugin options use the same shape. Direct CLI/headless runs can p
 
 ## Docker Mode
 
-Docker mode is the default for Plan and Build. Plan and Build from `/ralph`, `openralph plan`, and `openralph build` launch one Docker container from the host and run the full Ralph loop inside it through the container `openralph` CLI entrypoint. Docker uses `--pull=never`, so build the default image locally before running Dockerized loops. To intentionally run on the host, pass `--no-docker` for that run or set `"docker": { "enabled": false }` in plugin options.
+Docker mode is the default for Plan and Build. Plan and Build from `/ralph`, `openralph plan`, and `openralph build` launch one Docker container from the host and run the full Ralph loop inside it through the container `openralph` CLI entrypoint. Docker uses `--pull=never`, so build the default image locally before running Dockerized loops. OpenRalph checks the image's stamped package version before launch and refuses stale or unlabelled images; rebuild the image after updating OpenRalph. To intentionally run on the host, pass `--no-docker` for that run or set `"docker": { "enabled": false }` in plugin options.
 
 If you installed through opencode's plugin installer, the package bin may not be available on your shell `PATH`. Build the image with direct package execution:
 

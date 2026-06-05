@@ -12,6 +12,7 @@ import {
   containerPath,
   detectMaskableEnvFiles,
   IMAGE_PLUGIN_PATH,
+  OPENRALPH_IMAGE_VERSION_LABEL,
   shouldMaskEnvFile,
 } from "../src/docker.ts"
 
@@ -134,23 +135,27 @@ describe("buildDockerArgs", () => {
 
 describe("buildDockerImageArgs", () => {
   test("builds the local image from the package root", () => {
-    expect(buildDockerImageArgs({ packageRoot: "/opt/openralph" })).toEqual([
+    expect(buildDockerImageArgs({ packageRoot: "/opt/openralph", version: "1.2.3" })).toEqual([
       "build",
       "--file",
       "/opt/openralph/container/Dockerfile",
       "--tag",
       "openralph:local",
+      "--label",
+      `${OPENRALPH_IMAGE_VERSION_LABEL}=1.2.3`,
       "/opt/openralph",
     ])
   })
 
   test("accepts custom tag and no-cache", () => {
-    expect(buildDockerImageArgs({ packageRoot: "/opt/openralph", tag: "openralph:test", noCache: true })).toEqual([
+    expect(buildDockerImageArgs({ packageRoot: "/opt/openralph", tag: "openralph:test", noCache: true, version: "1.2.3" })).toEqual([
       "build",
       "--file",
       "/opt/openralph/container/Dockerfile",
       "--tag",
       "openralph:test",
+      "--label",
+      `${OPENRALPH_IMAGE_VERSION_LABEL}=1.2.3`,
       "--no-cache",
       "/opt/openralph",
     ])
