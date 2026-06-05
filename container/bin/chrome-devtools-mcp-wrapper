@@ -7,6 +7,33 @@ chrome_pid=""
 port=""
 ready="false"
 
+resolve_browser() {
+  if [ -n "${OPENRALPH_BROWSER_BIN:-}" ]; then
+    if [ -x "${OPENRALPH_BROWSER_BIN}" ]; then
+      printf '%s\n' "${OPENRALPH_BROWSER_BIN}"
+      return
+    fi
+
+    if browser_path="$(command -v "${OPENRALPH_BROWSER_BIN}" 2>/dev/null)"; then
+      printf '%s\n' "${browser_path}"
+      return
+    fi
+
+    printf 'OPENRALPH_BROWSER_BIN is set but is not an executable browser: %s\n' "${OPENRALPH_BROWSER_BIN}" >&2
+    exit 1
+  fi
+
+  for candidate in google-chrome google-chrome-stable chromium chromium-browser; do
+    if browser_path="$(command -v "${candidate}" 2>/dev/null)"; then
+      printf '%s\n' "${browser_path}"
+      return
+    fi
+  done
+
+  printf 'No supported browser executable found. Expected one of: google-chrome, google-chrome-stable, chromium, chromium-browser.\n' >&2
+  exit 1
+}
+
 cleanup() {
   if [ -n "${chrome_pid}" ] && kill -0 "${chrome_pid}" 2>/dev/null; then
     kill "${chrome_pid}" 2>/dev/null || true
@@ -17,7 +44,9 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
-google-chrome \
+browser_bin="$(resolve_browser)"
+
+"${browser_bin}" \
   --headless \
   --disable-gpu \
   --no-sandbox \

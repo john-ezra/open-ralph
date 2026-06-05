@@ -85,7 +85,9 @@ Server and TUI plugin options use the same shape. Direct CLI/headless runs can p
 
 ## Docker Mode
 
-Docker mode is the default for Plan and Build. Plan and Build from `/ralph`, `openralph plan`, and `openralph build` launch one Docker container from the host and run the full Ralph loop inside it through the container `openralph` CLI entrypoint. Docker uses `--pull=never`, so build the default image locally before running Dockerized loops. OpenRalph checks the image's stamped package version before launch and refuses stale or unlabelled images; rebuild the image after updating OpenRalph. To intentionally run on the host, pass `--no-docker` for that run or set `"docker": { "enabled": false }` in plugin options.
+Docker mode is the default for Plan and Build. Plan and Build from `/ralph`, `openralph plan`, and `openralph build` launch one Docker container from the host and run the full Ralph loop inside it through the container `openralph` CLI entrypoint. Docker uses `--pull=never`, so build the default image locally before running Dockerized loops. The default local image build supports `linux/amd64` and `linux/arm64`; arm64 images use Debian Chromium for browser validation instead of Google Chrome. OpenRalph checks the image's stamped package version before launch and refuses stale or unlabelled images; rebuild the image after updating OpenRalph. To intentionally run on the host, pass `--no-docker` for that run or set `"docker": { "enabled": false }` in plugin options.
+
+On Windows, run OpenRalph from WSL2 with Docker Desktop's WSL integration enabled. Native PowerShell/CMD execution is not a supported path because OpenRalph's CLI and Docker bind mounts assume a Linux-like shell and filesystem paths.
 
 If you installed through opencode's plugin installer, the package bin may not be available on your shell `PATH`. Build the image with direct package execution:
 
@@ -127,7 +129,7 @@ docker build -f Dockerfile.openralph -t openralph:rust .
 
 Then point plugin options at that tag with `"docker": { "enabled": true, "image": "openralph:rust" }`.
 
-The default image includes `opencode-ai@1.15.13`, Bun, Node 22, npm/npx/corepack, Git, Bash, curl, Python 3, native build tools, ripgrep, Google Chrome stable, screenshot-friendly fonts, and `chrome-devtools-mcp@1.1.1`.
+The default image includes `opencode-ai@1.15.13`, Bun, Node 22, npm/npx/corepack, Git, Bash, curl, Python 3, native build tools, ripgrep, screenshot-friendly fonts, `chrome-devtools-mcp@1.1.1`, and a browser for validation. It installs Google Chrome stable on `linux/amd64` and Debian Chromium on `linux/arm64`.
 
 Restart opencode after installing or changing `opencode.json`, `tui.json`, or plugin files. opencode loads plugin/config files only at startup.
 
@@ -210,7 +212,7 @@ Run artifacts may contain terminal output, command details, paths, and model tex
 - `main` and `master` produce a warning but are not blocked.
 - Docker mode disables project OpenCode config inside the container and injects config that loads only image-bundled OpenRalph for internal child commands.
 - Docker mode is enforced with runtime attestation: the host passes a random token through env and a read-only token-file mount, and the container refuses to run the loop if the token/evidence check fails.
-- Docker mode injects a `chrome-devtools` MCP server for browser validation. The MCP server uses `/opt/openralph/bin/chrome-devtools-mcp-wrapper`, which starts isolated headless Chrome on a loopback debugging port and connects via `--browser-url`.
+- Docker mode injects a `chrome-devtools` MCP server for browser validation. The MCP server uses `/opt/openralph/bin/chrome-devtools-mcp-wrapper`, which starts an isolated headless Chrome/Chromium browser on a loopback debugging port and connects via `--browser-url`.
 - The default image uses a non-root `opencode` user when Docker cannot run as the host UID/GID.
 - Docker mode mounts the repo read/write at `/workspace`, mounts host OpenCode auth read-only but readable by the agent, and masks real `.env*` files by default.
 - `.env.example`, `.env.sample`, `.env.template`, and `.env.dist` remain visible in Docker mode.

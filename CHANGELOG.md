@@ -9,6 +9,7 @@ The format is based on Keep a Changelog, and this project uses semantic versioni
 ### Changed
 
 - Docker image builds now stamp the OpenRalph package version, and Dockerized Plan/Build refuse to run stale or unlabelled `openralph:local` images.
+- Default Docker image builds now support both `linux/amd64` and `linux/arm64`, using Google Chrome on amd64 and Chromium on arm64 for browser validation.
 
 ## [0.1.2] - 2026-06-04
 
