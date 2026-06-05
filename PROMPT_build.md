@@ -19,19 +19,19 @@
 
 5. If unrelated failures or bugs are discovered, either resolve them if they are part of the current increment or document them in `IMPLEMENTATION_PLAN.md`.
 
-5a. If the iteration exposes a validation gap, unsafe operation pattern, repeated failure mode, or missing backpressure, document a concrete follow-up in `IMPLEMENTATION_PLAN.md` or a brief reusable operational note in `AGENTS.md`.
+5a. If the iteration exposes a validation gap, unsafe operation pattern, repeated failure mode, or missing backpressure, document a concrete follow-up in `IMPLEMENTATION_PLAN.md` or a brief reusable operational note in `AGENTS.md`. When auditing `runs/openralph-*`, use only prior completed run artifacts. Ignore any run artifact directory whose `ralph.log` does not contain a final run-finished section; the current run is being written concurrently and can contain incomplete or self-referential output.
 
-6. Keep `IMPLEMENTATION_PLAN.md` up to date. Remove or mark completed work, add discovered follow-up work, and document blockers.
+6. Keep `IMPLEMENTATION_PLAN.md` up to date. Remove or mark completed work, add discovered follow-up work, document blockers, and reconcile stale or contradictory progress and validation text against the latest validation result.
 
 7. Update `AGENTS.md` only for brief operational learnings, such as correct commands or important run/build notes. Do not use it as a progress log.
 
-8. Before committing, update `IMPLEMENTATION_PLAN.md` so the next fresh iteration can choose the next most important task without relying on prior context. When validation passes and the task is complete, commit the changes with a concise message. After `git commit` succeeds, confirm `git status --short` is clean. Only then mark commit-related todos complete. Do not push. Do not create tags.
+8. Before committing, update `IMPLEMENTATION_PLAN.md` so the next fresh iteration can choose the next most important task without relying on prior context. Check the entire file for stale completed-item details, obsolete pass/fail counts, duplicated tasks, contradicted validation notes, and remaining-work text that no longer matches the code. When validation passes and the task is complete, commit the changes with a concise message. After `git commit` succeeds, confirm `git status --short` is clean. Only then mark commit-related todos complete. Do not push. Do not create tags.
 
 9. If you completed and committed one task in this iteration, print exactly this standalone final line, even if that task was the last actionable item:
 
 RALPH_ITERATION_COMPLETE
 
-10. If this iteration starts with no actionable tasks remaining, ensure `IMPLEMENTATION_PLAN.md` reflects that state, confirm `git status --short` is clean, and print exactly this standalone final line:
+10. If this iteration starts with no actionable tasks remaining, perform a final verification pass before printing `RALPH_COMPLETE`: review all of `IMPLEMENTATION_PLAN.md` for stale or contradictory progress and validation text, run the relevant validation from `AGENTS.md` when practical, and confirm `git status --short` is clean. If `IMPLEMENTATION_PLAN.md` needs any cleanup during this final pass, update it, commit the plan-only cleanup, and print `RALPH_ITERATION_COMPLETE` instead so another fresh iteration can verify the final state. Only when validation passes, the worktree is clean, and `IMPLEMENTATION_PLAN.md` accurately reflects no actionable work remaining, print exactly this standalone final line:
 
 RALPH_COMPLETE
 
@@ -45,4 +45,4 @@ RALPH_BLOCKED
 
 ## IMPLEMENTATION_PLAN.md Hygiene
 
-Treat `IMPLEMENTATION_PLAN.md` as the canonical prioritized checklist. Keep remaining actionable work sorted from highest to lowest value. Completed items should be removed or clearly marked complete. Blocked items must include the blocker and what would unblock them before printing `RALPH_BLOCKED`. Add discovered bugs, audit findings, validation gaps, and follow-up work in the correct priority position. Remove stale, duplicated, or contradicted tasks. If the plan becomes noisy or large, clean completed/stale entries while preserving remaining work and blockers. Do not record progress in `AGENTS.md`.
+Treat `IMPLEMENTATION_PLAN.md` as the canonical prioritized checklist. Keep remaining actionable work sorted from highest to lowest value. Completed items should be removed or clearly marked complete. Blocked items must include the blocker and what would unblock them before printing `RALPH_BLOCKED`. Add discovered bugs, audit findings, validation gaps, and follow-up work in the correct priority position. Remove stale, duplicated, or contradicted tasks, including obsolete validation summaries. If the plan becomes noisy or large, clean completed/stale entries while preserving remaining work and blockers. Do not record progress in `AGENTS.md`.
