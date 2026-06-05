@@ -1,5 +1,5 @@
 import { readOptionsFromEnv, runOpenRalphLauncher, type RunLauncherInput } from "./launcher.ts"
-import { DEFAULT_DOCKER_IMAGE, validateDockerImageReference, type LoopPhase } from "./args.ts"
+import { DEFAULT_LOCAL_DOCKER_IMAGE, validateDockerImageReference, type LoopPhase } from "./args.ts"
 import { buildLocalDockerImage } from "./docker.ts"
 import type { CommandResult } from "./exec.ts"
 
@@ -77,7 +77,7 @@ async function runDockerCli(argv: string[], deps: CliDeps): Promise<number> {
 }
 
 function parseDockerBuildArgs(argv: string[]): { tag: string; noCache: boolean } {
-  const parsed = { tag: DEFAULT_DOCKER_IMAGE, noCache: false }
+  const parsed = { tag: DEFAULT_LOCAL_DOCKER_IMAGE, noCache: false }
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index]

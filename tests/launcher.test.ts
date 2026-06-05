@@ -82,6 +82,7 @@ describe("runOpenRalphLauncher", () => {
           dockerCalled = true
           expect(input.projectRoot).toBe("/repo")
           expect(input.rawArgs).toBe("5")
+          expect(input.docker?.image).toBe("ghcr.io/john-ezra/openralph:1.2.3")
           expect(input.onOutput).toBe(onOutput)
           return {
             exitCode: 0,
@@ -189,12 +190,57 @@ describe("runOpenRalphLauncher", () => {
     expect(hostCalled).toBe(false)
   })
 
-  test("reports missing Docker image before running the container", async () => {
+  test("pulls a missing default Docker image before running the container", async () => {
     let dockerCalled = false
+    let pullCalled = false
+    let inspectCalls = 0
+
+    const result = await runOpenRalphLauncher(
+      { phase: "plan", rawArgs: "5", cwd: "/repo", options: {} },
+      {
+        env: {},
+        trust: noContainer,
+        commandExists: allCommandsExist,
+        inspectDockerImage: async (image, cwd) => {
+          inspectCalls += 1
+          expect(image).toBe("ghcr.io/john-ezra/openralph:1.2.3")
+          expect(cwd).toBe("/repo")
+          return inspectCalls === 1 ? { exists: false } : { exists: true, version: currentVersion }
+        },
+        pullDockerImage: async (input) => {
+          pullCalled = true
+          expect(input.image).toBe("ghcr.io/john-ezra/openralph:1.2.3")
+          expect(input.cwd).toBe("/repo")
+          return { exitCode: 0, signal: null, stdout: "pulled", stderr: "" }
+        },
+        readPackageVersion: readCurrentVersion,
+        requireGitContext: async () => ({ root: "/repo", branch: "feature/test" }),
+        runDockerLoop: async (input) => {
+          dockerCalled = true
+          expect(input.docker?.image).toBe("ghcr.io/john-ezra/openralph:1.2.3")
+          return {
+            exitCode: 0,
+            signal: null,
+            stdout: "OpenRalph plan complete: planning complete\n",
+            stderr: "",
+          }
+        },
+      },
+    )
+
+    expect(pullCalled).toBe(true)
+    expect(inspectCalls).toBe(2)
+    expect(dockerCalled).toBe(true)
+    expect(result.summary).toContain("OpenRalph plan Docker execution completed")
+  })
+
+  test("does not pull missing custom Docker images", async () => {
+    let dockerCalled = false
+    let pullCalled = false
 
     await expect(
       runOpenRalphLauncher(
-        { phase: "plan", rawArgs: "5", cwd: "/repo", options: {} },
+        { phase: "plan", rawArgs: "5", cwd: "/repo", options: { docker: { image: "openralph:local" } } },
         {
           env: {},
           trust: noContainer,
@@ -204,13 +250,45 @@ describe("runOpenRalphLauncher", () => {
             expect(cwd).toBe("/repo")
             return { exists: false }
           },
+          pullDockerImage: async () => {
+            pullCalled = true
+            throw new Error("unexpected Docker pull")
+          },
           runDockerLoop: async () => {
             dockerCalled = true
             throw new Error("unexpected Docker call")
           },
         },
       ),
-    ).rejects.toThrow("Docker image openralph:local was not found")
+    ).rejects.toThrow("Custom configured Docker images are user-managed")
+
+    expect(pullCalled).toBe(false)
+    expect(dockerCalled).toBe(false)
+  })
+
+  test("reports default Docker image pull failures before running the container", async () => {
+    let dockerCalled = false
+
+    await expect(
+      runOpenRalphLauncher(
+        { phase: "plan", rawArgs: "5", cwd: "/repo", options: {} },
+        {
+          env: {},
+          trust: noContainer,
+          commandExists: allCommandsExist,
+          inspectDockerImage: async () => ({ exists: false }),
+          pullDockerImage: async (input) => {
+            expect(input.image).toBe("ghcr.io/john-ezra/openralph:1.2.3")
+            return { exitCode: 1, signal: null, stdout: "", stderr: "pull failed" }
+          },
+          readPackageVersion: readCurrentVersion,
+          runDockerLoop: async () => {
+            dockerCalled = true
+            throw new Error("unexpected Docker call")
+          },
+        },
+      ),
+    ).rejects.toThrow("could not pull default Docker image")
 
     expect(dockerCalled).toBe(false)
   })
@@ -226,7 +304,7 @@ describe("runOpenRalphLauncher", () => {
           trust: noContainer,
           commandExists: allCommandsExist,
           inspectDockerImage: async (image, cwd) => {
-            expect(image).toBe("openralph:local")
+            expect(image).toBe("ghcr.io/john-ezra/openralph:1.2.3")
             expect(cwd).toBe("/repo")
             return { exists: true, version: "1.2.2" }
           },
@@ -237,7 +315,7 @@ describe("runOpenRalphLauncher", () => {
           },
         },
       ),
-    ).rejects.toThrow("Docker image openralph:local is stale")
+    ).rejects.toThrow("Docker image ghcr.io/john-ezra/openralph:1.2.3 is stale")
 
     expect(dockerCalled).toBe(false)
   })

@@ -4,7 +4,8 @@ import { access, mkdtemp, readdir, rm, writeFile } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
 import { basename, join, relative, sep } from "node:path"
 import {
-  DEFAULT_DOCKER_IMAGE,
+  DEFAULT_LOCAL_DOCKER_IMAGE,
+  defaultPublishedDockerImage,
   formatLoopArgsForReplay,
   parseLoopArgs,
   resolveDockerOptions,
@@ -44,6 +45,7 @@ export interface RunDockerLoopInput {
   rawArgs: string
   projectRoot: string
   options: OpenRalphOptions
+  docker?: ResolvedDockerOptions
   streamOutput?: boolean
   captureOutput?: boolean
   onOutput?: (event: CommandOutputEvent) => void
@@ -70,6 +72,15 @@ export interface BuildDockerImageArgsInput {
 export interface DockerImageStatus {
   exists: boolean
   version?: string
+}
+
+export interface PullDockerImageInput {
+  image: string
+  cwd?: string
+  streamOutput?: boolean
+  captureOutput?: boolean
+  onOutput?: (event: CommandOutputEvent) => void
+  signal?: AbortSignal
 }
 
 export interface DockerMount {
@@ -110,7 +121,7 @@ export interface DockerToken {
 
 export async function runDockerLoop(input: RunDockerLoopInput): Promise<CommandResult> {
   const parsed = parseLoopArgs(input.phase, input.rawArgs)
-  const docker = resolveDockerOptions(input.options)
+  const docker = input.docker ?? resolveRuntimeDockerOptions(input.options)
   const authPath = defaultAuthPath()
   await requireReadableFile(authPath, "OpenCode auth file")
 
@@ -184,7 +195,7 @@ export function buildDockerImageArgs(input: BuildDockerImageArgsInput = {}): str
     "--file",
     join(packageRoot, "container", "Dockerfile"),
     "--tag",
-    input.tag ?? DEFAULT_DOCKER_IMAGE,
+    input.tag ?? DEFAULT_LOCAL_DOCKER_IMAGE,
     "--label",
     `${OPENRALPH_IMAGE_VERSION_LABEL}=${version}`,
   ]
@@ -226,8 +237,22 @@ export async function inspectDockerImage(image: string, cwd = process.cwd()): Pr
   }
 }
 
+export async function pullDockerImage(input: PullDockerImageInput): Promise<CommandResult> {
+  return startCommand("docker", ["pull", input.image], {
+    cwd: input.cwd ?? process.cwd(),
+    streamOutput: input.streamOutput ?? true,
+    captureOutput: input.captureOutput ?? true,
+    onOutput: input.onOutput,
+    signal: input.signal,
+  }).result
+}
+
 export function readOpenRalphPackageVersion(packageRoot = defaultPackageRoot()): string {
   return readPackageVersion(packageRoot)
+}
+
+export function resolveRuntimeDockerOptions(options: OpenRalphOptions, version = readOpenRalphPackageVersion()): ResolvedDockerOptions {
+  return resolveDockerOptions(options, defaultPublishedDockerImage(version))
 }
 
 export function buildDockerArgs(input: BuildDockerArgsInput): string[] {
@@ -272,7 +297,7 @@ export function buildDockerArgs(input: BuildDockerArgsInput): string[] {
 
 export function buildContainerConfig(
   options: OpenRalphOptions,
-  docker: ResolvedDockerOptions = resolveDockerOptions(options),
+  docker: ResolvedDockerOptions = resolveRuntimeDockerOptions(options),
   imagePluginPath = IMAGE_PLUGIN_PATH,
 ): string {
   const pluginOptions: OpenRalphOptions = {

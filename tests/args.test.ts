@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { formatLoopArgsForReplay, parseLoopArgs, resolveDockerOptions, resolveModel, validateOptions } from "../src/args.ts"
+import { defaultPublishedDockerImage, formatLoopArgsForReplay, parseLoopArgs, resolveDockerOptions, resolveModel, validateOptions } from "../src/args.ts"
 
 describe("parseLoopArgs", () => {
   test("parses empty plan args", () => {
@@ -96,7 +96,7 @@ describe("validateOptions", () => {
     expect(resolveDockerOptions(options)).toEqual({ enabled: true, image: "openralph:test", maskEnv: false })
   })
 
-  test("uses docker defaults", () => {
+  test("uses local docker defaults unless a runtime default is provided", () => {
     expect(resolveDockerOptions(validateOptions({}))).toEqual({
       enabled: true,
       image: "openralph:local",
@@ -105,6 +105,11 @@ describe("validateOptions", () => {
     expect(resolveDockerOptions(validateOptions({ docker: { enabled: true } }))).toEqual({
       enabled: true,
       image: "openralph:local",
+      maskEnv: true,
+    })
+    expect(resolveDockerOptions(validateOptions({}), defaultPublishedDockerImage("1.2.3"))).toEqual({
+      enabled: true,
+      image: "ghcr.io/john-ezra/openralph:1.2.3",
       maskEnv: true,
     })
   })

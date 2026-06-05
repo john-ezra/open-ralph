@@ -1,6 +1,7 @@
 export type LoopPhase = "plan" | "build"
 
-export const DEFAULT_DOCKER_IMAGE = "openralph:local"
+export const DEFAULT_LOCAL_DOCKER_IMAGE = "openralph:local"
+export const DEFAULT_DOCKER_IMAGE_REPOSITORY = "ghcr.io/john-ezra/openralph"
 
 const DOCKER_DOMAIN_COMPONENT = "[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
 const DOCKER_NAME_COMPONENT = "[a-z0-9]+(?:(?:[._-]+|__)[a-z0-9]+)*"
@@ -110,10 +111,14 @@ export function formatLoopArgsForReplay(args: ParsedLoopArgs): string {
   return tokens.map(quoteArg).join(" ")
 }
 
-export function resolveDockerOptions(options: OpenRalphOptions): ResolvedDockerOptions {
+export function defaultPublishedDockerImage(version: string): string {
+  return validateDockerImageReference(`${DEFAULT_DOCKER_IMAGE_REPOSITORY}:${version}`, "default Docker image")
+}
+
+export function resolveDockerOptions(options: OpenRalphOptions, defaultImage = DEFAULT_LOCAL_DOCKER_IMAGE): ResolvedDockerOptions {
   return {
     enabled: options.docker?.enabled ?? true,
-    image: options.docker?.image ?? DEFAULT_DOCKER_IMAGE,
+    image: options.docker?.image ?? defaultImage,
     maskEnv: options.docker?.maskEnv ?? true,
   }
 }
