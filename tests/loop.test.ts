@@ -65,6 +65,22 @@ describe("runLoop build completion", () => {
       expect(tags.stdout.trim().split(/\r?\n/).filter(Boolean)).toHaveLength(1)
     })
   })
+
+  test("fails when a child masks files by editing git info exclude", async () => {
+    await withFakeOpenCode("exclude-mutation", async (root) => {
+      const summary = await runBuild(root)
+
+      expect(summary.status).toBe("failed")
+      expect(summary.message).toContain(".git/info/exclude")
+      expect(summary.tagged).toBe(0)
+
+      const tags = await runGit(root, ["tag", "--list", "openralph/build-*"])
+      expect(tags.stdout.trim()).toBe("")
+
+      const log = await readFile(join(summary.artifacts, "ralph.log"), "utf8")
+      expect(log).toContain("status: build child modified .git/info/exclude")
+    })
+  })
 })
 
 async function runBuild(root: string, rawArgs = "1"): Promise<LoopSummary> {
@@ -127,6 +143,15 @@ case "\${OPENRALPH_TEST_SCENARIO:-}" in
     git add result.txt
     git commit -m 'Complete final task' >/dev/null
     printf 'RALPH_COMPLETE\n'
+    ;;
+  exclude-mutation)
+    mkdir -p .opencode
+    printf '{"plugin":["@john.ezra/openralph"]}\n' > .opencode/opencode.json
+    printf '.opencode/\n' >> .git/info/exclude
+    printf 'complete\n' >> result.txt
+    git add result.txt
+    git commit -m 'Complete task while masking config' >/dev/null
+    printf 'RALPH_ITERATION_COMPLETE\n'
     ;;
   *)
     printf 'unknown scenario: %s\n' "\${OPENRALPH_TEST_SCENARIO:-}" >&2

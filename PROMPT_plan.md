@@ -9,7 +9,7 @@
 
 2. Create or update `IMPLEMENTATION_PLAN.md` as a prioritized list of remaining actionable work. Keep it up to date with items that are complete, incomplete, blocked, or discovered during research.
 
-3. Consider TODOs, placeholder implementations, skipped or flaky tests, minimal stubs, inconsistent patterns, missing validation, missing backpressure, and audit findings from recent completed `runs/openralph-*` artifacts when available. Ignore any run artifact directory whose `ralph.log` does not contain a final run-finished section; the current run is being written concurrently and can contain incomplete or self-referential output.
+3. Consider TODOs, placeholder implementations, skipped or flaky tests, minimal stubs, inconsistent patterns, missing validation, missing backpressure, and audit findings from recent completed `runs/openralph-*` artifacts when available. A run artifact is completed only when its `ralph.log` contains the final `OpenRalph <phase> run finished` section, such as `OpenRalph plan run finished` or `OpenRalph build run finished`. Ignore any run artifact directory without that section; the current run is being written concurrently and can contain incomplete or self-referential output. Do not persist notes about ignored current-run artifacts in `IMPLEMENTATION_PLAN.md`; those notes become stale as soon as the current run finishes.
 
 4. Plan only. Do not implement code. Do not commit. Do not push. Do not create tags.
 

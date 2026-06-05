@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises"
 import { runCommand, type CommandResult } from "./exec.ts"
 
 const DEFENSIVE_GIT_CONFIG = [
@@ -37,6 +38,21 @@ export async function isWorktreeClean(cwd: string): Promise<boolean> {
   return result.stdout.trim() === ""
 }
 
+export async function readGitInfoExclude(cwd: string): Promise<string> {
+  const result = await runGitCommand(["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"], cwd)
+  if (result.exitCode !== 0) {
+    const detail = (result.stderr || result.stdout).trim()
+    throw new Error(detail || "git rev-parse --git-path info/exclude failed")
+  }
+
+  try {
+    return await readFile(result.stdout.trim(), "utf8")
+  } catch (error) {
+    if (isNotFound(error)) return ""
+    throw error
+  }
+}
+
 export async function tagExists(cwd: string, tagName: string): Promise<boolean> {
   const result = await runGitCommand(["rev-parse", "-q", "--verify", `refs/tags/${tagName}`], cwd)
   return result.exitCode === 0
@@ -59,4 +75,8 @@ async function runGit(args: string[], cwd: string) {
     throw new Error(detail || `git ${args.join(" ")} failed`)
   }
   return result
+}
+
+function isNotFound(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "ENOENT"
 }

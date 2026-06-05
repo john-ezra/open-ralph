@@ -1,7 +1,7 @@
 import { parseLoopArgs, resolveModel, type LoopPhase, type OpenRalphOptions } from "./args.ts"
 import { createRunArtifacts, finishRunArtifacts, startIterationArtifacts } from "./artifacts.ts"
 import { startCommand, type CommandOutputEvent, type CommandResult } from "./exec.ts"
-import { requireGitContext, getHead, isWorktreeClean, createLightweightTag, pushCurrentBranch } from "./git.ts"
+import { requireGitContext, getHead, isWorktreeClean, createLightweightTag, pushCurrentBranch, readGitInfoExclude } from "./git.ts"
 import { detectBuildSentinel, isPlanComplete } from "./sentinels.ts"
 import { createBuildTagName } from "./tags.ts"
 import { createHostLoopToken } from "./trust.ts"
@@ -136,6 +136,7 @@ export async function runLoop(input: RunLoopInput): Promise<LoopSummary> {
       }
 
       const beforeHead = input.phase === "build" ? await getHead(git.root) : undefined
+      const beforeGitInfoExclude = input.phase === "build" ? await readGitInfoExclude(git.root) : undefined
       const childArgs = buildChildArgs(input.phase, git.root, model)
       state.launched += 1
       const iterationArtifacts = await startIterationArtifacts(artifacts, state.launched, childArgs)
@@ -193,6 +194,17 @@ export async function runLoop(input: RunLoopInput): Promise<LoopSummary> {
       }
 
       const sentinel = detectBuildSentinel(output)
+      if (beforeGitInfoExclude !== undefined && (await readGitInfoExclude(git.root)) !== beforeGitInfoExclude) {
+        await iterationArtifacts.finish({
+          result,
+          status: "build child modified .git/info/exclude",
+          sentinel: sentinel === "none" ? undefined : sentinel,
+        })
+        return finish(
+          "failed",
+          "build child modified .git/info/exclude; restore it and use tracked ignore rules or fixture cleanup instead of masking files",
+        )
+      }
       await iterationArtifacts.finish({ result, status: `build sentinel: ${sentinel}`, sentinel: sentinel === "none" ? undefined : sentinel })
       if (sentinel === "complete") {
         const afterHead = await getHead(git.root)

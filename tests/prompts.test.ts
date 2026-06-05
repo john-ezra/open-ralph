@@ -17,9 +17,25 @@ describe("bundled prompts", () => {
     const buildPrompt = await readPrompt("PROMPT_build.md")
 
     for (const prompt of [planPrompt, buildPrompt]) {
-      expect(prompt).toContain("Ignore any run artifact directory whose `ralph.log` does not contain a final run-finished section")
+      expect(prompt).toContain("`ralph.log` contains the final `OpenRalph <phase> run finished` section")
+      expect(prompt).toContain("OpenRalph build run finished")
       expect(prompt).toContain("current run is being written concurrently")
+      expect(prompt).toContain("Do not persist notes about ignored current-run artifacts in `IMPLEMENTATION_PLAN.md`")
     }
+  })
+
+  test("build prompt avoids masking clean-status blockers", async () => {
+    const prompt = await readPrompt("PROMPT_build.md")
+
+    expect(prompt).toContain("Do not edit `.git/info/exclude` or ignore rules just to hide unrelated files")
+    expect(prompt).toContain("document the blocker or ask for fixture cleanup")
+  })
+
+  test("build final completion uses verification-only todos", async () => {
+    const prompt = await readPrompt("PROMPT_build.md")
+
+    expect(prompt).toContain("switch to final-verification-only todos")
+    expect(prompt).toContain("Do not leave implementation or commit todos unchecked when no implementation or commit is needed")
   })
 })
 
