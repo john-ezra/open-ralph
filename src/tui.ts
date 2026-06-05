@@ -1,5 +1,7 @@
+import { readFile } from "node:fs/promises"
+import { join } from "node:path"
 import type { TuiDialogStack, TuiPlugin, TuiPluginModule } from "@opencode-ai/plugin/tui"
-import { validateOptions } from "./args.ts"
+import { parseLoopArgs, resolveModel, validateOptions } from "./args.ts"
 import { buildDesignUserPrompt, DESIGN_SYSTEM_PROMPT } from "./design.ts"
 import type { CommandOutputEvent } from "./exec.ts"
 import { runOpenRalphLauncher, type RunLauncherInput } from "./launcher.ts"
@@ -24,12 +26,19 @@ interface TuiRunState {
 
 type RalphMode = "design" | "plan" | "build"
 type RunLauncher = typeof runOpenRalphLauncher
+type SelectedModels = Map<string, string>
 
 export function createTuiModule(runLauncher: RunLauncher = runOpenRalphLauncher): TuiPluginModule {
   const tui = (async (api, rawOptions, _meta) => {
     const options = validateOptions(rawOptions)
     let active: TuiRunState | undefined
     let lastRun: TuiRunState | undefined
+    const selectedModels: SelectedModels = new Map()
+
+    const unregisterModelSwitch = api.event?.on?.("session.next.model.switched", (event) => {
+      const model = formatSelectedModel(event.properties.model)
+      if (model) selectedModels.set(event.properties.sessionID, model)
+    })
 
     const unregister = api.keymap.registerLayer({
       commands: [
@@ -39,7 +48,7 @@ export function createTuiModule(runLauncher: RunLauncher = runOpenRalphLauncher)
           title: "OpenRalph: Choose Phase",
           category: "OpenRalph",
           slashName: "ralph",
-          run: () => showModeSelect(api, undefined, options, runLauncher, () => active, (next) => {
+          run: () => showModeSelect(api, undefined, options, selectedModels, runLauncher, () => active, (next) => {
             active = next
           }, (next) => {
             lastRun = next
@@ -53,6 +62,7 @@ export function createTuiModule(runLauncher: RunLauncher = runOpenRalphLauncher)
       active?.controller.abort()
       if (active) clearRefreshTimer(active)
       if (lastRun && lastRun !== active) clearRefreshTimer(lastRun)
+      unregisterModelSwitch?.()
       unregister()
     })
   }) satisfies TuiPlugin
@@ -66,6 +76,7 @@ function showModeSelect(
   api: Parameters<TuiPlugin>[0],
   dialog: TuiDialogStack | undefined,
   options: ReturnType<typeof validateOptions>,
+  selectedModels: SelectedModels,
   runLauncher: RunLauncher,
   getActive: () => TuiRunState | undefined,
   setActive: (run: TuiRunState | undefined) => void,
@@ -99,7 +110,7 @@ function showModeSelect(
           promptForDesign(api, stack, options, getActive)
           return
         }
-        promptForArgs(api, stack, option.value, options, runLauncher, getActive, setActive, setLastRun)
+        promptForArgs(api, stack, option.value, options, selectedModels, runLauncher, getActive, setActive, setLastRun)
       },
     }),
   )
@@ -174,8 +185,8 @@ async function ensureDesignSession(api: Parameters<TuiPlugin>[0]): Promise<strin
 }
 
 function currentSessionID(api: Parameters<TuiPlugin>[0]): string | undefined {
-  const route = api.route.current
-  if (route.name !== "session") return undefined
+  const route = api.route?.current
+  if (route?.name !== "session") return undefined
   const sessionID = route.params?.sessionID
   return typeof sessionID === "string" ? sessionID : undefined
 }
@@ -201,6 +212,7 @@ function promptForArgs(
   dialog: TuiDialogStack | undefined,
   phase: "plan" | "build",
   options: ReturnType<typeof validateOptions>,
+  selectedModels: SelectedModels,
   runLauncher: RunLauncher,
   getActive: () => TuiRunState | undefined,
   setActive: (run: TuiRunState | undefined) => void,
@@ -214,7 +226,7 @@ function promptForArgs(
       onConfirm: (value) => {
         stack.clear()
         setTimeout(() => {
-          void startTuiRun(api, phase, value, options, runLauncher, getActive, setActive, setLastRun)
+          void startTuiRun(api, phase, value, options, selectedModels, runLauncher, getActive, setActive, setLastRun)
         }, 0)
       },
       onCancel: () => stack.clear(),
@@ -233,6 +245,7 @@ async function startTuiRun(
   phase: "plan" | "build",
   rawArgs: string,
   options: ReturnType<typeof validateOptions>,
+  selectedModels: SelectedModels,
   runLauncher: RunLauncher,
   getActive: () => TuiRunState | undefined,
   setActive: (run: TuiRunState | undefined) => void,
@@ -257,9 +270,15 @@ async function startTuiRun(
   showOutputDialog(api, undefined, run)
 
   try {
+    const effectiveRawArgs = withSelectedModelFallback(phase, rawArgs, options, await selectedTuiModel(api, selectedModels))
+    if (effectiveRawArgs !== run.rawArgs) {
+      run.rawArgs = effectiveRawArgs
+      refreshOutputDialog(api, run)
+    }
+
     const input: RunLauncherInput = {
       phase,
-      rawArgs,
+      rawArgs: effectiveRawArgs,
       cwd: api.state.path.worktree || api.state.path.directory,
       options,
       streamOutput: false,
@@ -280,6 +299,71 @@ async function startTuiRun(
     clearRefreshTimer(run)
     if (getActive() === run) setActive(undefined)
   }
+}
+
+function withSelectedModelFallback(
+  phase: "plan" | "build",
+  rawArgs: string,
+  options: ReturnType<typeof validateOptions>,
+  selectedModel: string | undefined,
+): string {
+  if (!selectedModel) return rawArgs
+
+  const parsed = parseLoopArgs(phase, rawArgs)
+  if (resolveModel(phase, parsed, options)) return rawArgs
+
+  const trimmed = rawArgs.trim()
+  return trimmed ? `${trimmed} --model ${selectedModel}` : `--model ${selectedModel}`
+}
+
+async function selectedTuiModel(api: Parameters<TuiPlugin>[0], selectedModels: SelectedModels): Promise<string | undefined> {
+  const sessionID = currentSessionID(api)
+  const selectedModel = sessionID ? selectedModels.get(sessionID) : undefined
+  if (selectedModel) return selectedModel
+
+  const recentModel = await selectedRecentModel(api)
+  if (recentModel) return recentModel
+
+  if (!sessionID) return undefined
+
+  const model = api.state.session?.get(sessionID)?.model
+  return formatSelectedModel(model)
+}
+
+async function selectedRecentModel(api: Parameters<TuiPlugin>[0]): Promise<string | undefined> {
+  const statePath = api.state.path?.state
+  if (!statePath) return undefined
+
+  try {
+    const parsed = JSON.parse(await readFile(join(statePath, "model.json"), "utf8")) as unknown
+    if (!isRecord(parsed) || !Array.isArray(parsed.recent)) return undefined
+
+    for (const entry of parsed.recent) {
+      if (!isRecord(entry)) continue
+      const providerID = typeof entry.providerID === "string" ? entry.providerID : undefined
+      const modelID = typeof entry.modelID === "string" ? entry.modelID : undefined
+      if (!providerID || !modelID || !isKnownModel(api, providerID, modelID)) continue
+      return `${providerID}/${modelID}`
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function isKnownModel(api: Parameters<TuiPlugin>[0], providerID: string, modelID: string): boolean {
+  const providers = api.state.provider
+  if (!providers?.length) return true
+  const provider = providers.find((entry) => entry.id === providerID)
+  return Boolean(provider?.models?.[modelID])
+}
+
+function formatSelectedModel(model: { providerID?: string; id?: string } | undefined): string | undefined {
+  if (!model?.providerID || !model.id) return undefined
+  return `${model.providerID}/${model.id}`
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function recordOutput(api: Parameters<TuiPlugin>[0], run: TuiRunState, event: CommandOutputEvent): void {

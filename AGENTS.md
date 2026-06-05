@@ -64,7 +64,7 @@ Model selection is intentionally simple.
 Precedence:
 
 ```text
-command --model -> OpenRalph config -> opencode default
+command --model -> OpenRalph config -> current TUI session model for `/ralph` Plan/Build -> opencode default
 ```
 
 Plugin options:
@@ -82,7 +82,7 @@ Plugin options:
 }
 ```
 
-If no model is configured or passed, omit `--model` and let opencode use its default.
+If no model is configured or passed, `/ralph` Plan/Build should pass the current TUI session's selected model when available. Direct CLI/headless runs omit `--model` and let opencode use its default.
 
 ## Git Guardrails
 

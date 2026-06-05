@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { describe, expect, test } from "bun:test"
 import type { LauncherResult, RunLauncherInput } from "../src/launcher.ts"
 import { createTuiModule } from "../src/tui.ts"
@@ -18,6 +21,7 @@ type KeymapLayer = { commands: KeymapCommand[]; bindings: KeymapBinding[]; prior
 type DialogSelectOption = { title: string; value: string; description?: string }
 type DialogSelectProps = { title?: string; placeholder?: string; options: DialogSelectOption[]; onSelect?: (option: DialogSelectOption) => void }
 type DialogConfirmProps = { message: string; onConfirm?: () => void; onCancel?: () => void }
+type SessionModel = { id: string; providerID: string; variant?: string }
 
 const defaultLauncherImplementation = async (input: RunLauncherInput): Promise<LauncherResult> => ({
   phase: input.phase,
@@ -168,6 +172,66 @@ describe("TUI plugin", () => {
     expect(toasts).toHaveLength(0)
 
     for (const dispose of disposers) dispose()
+  })
+
+  test("uses current session model as TUI plan/build fallback", async () => {
+    const sessionModel = { providerID: "provider", id: "selected-model", variant: "high" }
+
+    const planInput = await launchFromTui({ phase: "plan", prompt: "2 --no-docker", sessionModel })
+    expect(planInput?.phase).toBe("plan")
+    expect(planInput?.rawArgs).toBe("2 --no-docker --model provider/selected-model")
+
+    const buildInput = await launchFromTui({ phase: "build", prompt: "", sessionModel })
+    expect(buildInput?.phase).toBe("build")
+    expect(buildInput?.rawArgs).toBe("--model provider/selected-model")
+  })
+
+  test("does not override explicit or configured TUI models", async () => {
+    const sessionModel = { providerID: "provider", id: "selected-model" }
+
+    const explicitInput = await launchFromTui({ phase: "plan", prompt: "1 --model provider/explicit", sessionModel })
+    expect(explicitInput?.rawArgs).toBe("1 --model provider/explicit")
+
+    const configuredInput = await launchFromTui({
+      phase: "plan",
+      prompt: "1",
+      options: { planModel: "provider/configured" },
+      sessionModel,
+    })
+    expect(configuredInput?.rawArgs).toBe("1")
+  })
+
+  test("prefers TUI next-model selection over the session record", async () => {
+    const input = await launchFromTui({
+      phase: "plan",
+      prompt: "1",
+      sessionModel: { providerID: "opencode", id: "big-pickle" },
+      switchedModel: { providerID: "provider", id: "selected-model" },
+    })
+
+    expect(input?.rawArgs).toBe("1 --model provider/selected-model")
+  })
+
+  test("uses the TUI recent model state before the session record", async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), "openralph-tui-state-"))
+    try {
+      await writeFile(
+        join(stateDir, "model.json"),
+        JSON.stringify({ recent: [{ providerID: "openai", modelID: "gpt-5.5" }] }),
+      )
+
+      const input = await launchFromTui({
+        phase: "plan",
+        prompt: "1",
+        statePath: stateDir,
+        providers: [{ id: "openai", models: { "gpt-5.5": { id: "gpt-5.5" } } }],
+        sessionModel: { providerID: "opencode", id: "big-pickle" },
+      })
+
+      expect(input?.rawArgs).toBe("1 --model openai/gpt-5.5")
+    } finally {
+      await rm(stateDir, { recursive: true, force: true })
+    }
   })
 
   test("auto-opens output dialog without lifecycle toasts", async () => {
@@ -477,3 +541,92 @@ describe("TUI plugin", () => {
   })
 
 })
+
+async function launchFromTui(input: {
+  phase: "plan" | "build"
+  prompt: string
+  options?: Record<string, unknown>
+  sessionModel?: SessionModel
+  switchedModel?: SessionModel
+  statePath?: string
+  providers?: Array<{ id: string; models: Record<string, { id: string }> }>
+}): Promise<RunLauncherInput | undefined> {
+  let registeredLayer: KeymapLayer | undefined
+  let promptProps: { onConfirm?: (value: string) => void } | undefined
+  let selectProps: DialogSelectProps | undefined
+  let launcherInput: RunLauncherInput | undefined
+  let modelSwitchHandler: ((event: { properties: { sessionID: string; model: SessionModel } }) => void) | undefined
+  const disposers: Array<() => void> = []
+
+  launcherImplementation = async (runInput) => {
+    launcherInput = runInput
+    return defaultLauncherImplementation(runInput)
+  }
+
+  try {
+    await tuiModule.tui(
+      {
+        keymap: {
+          intercept: () => () => undefined,
+          registerLayer: (layer: KeymapLayer) => {
+            registeredLayer = layer
+            return () => undefined
+          },
+        },
+        lifecycle: { onDispose: (fn: () => void) => (disposers.push(fn), () => undefined) },
+        event: {
+          on: (type: string, handler: (event: { properties: { sessionID: string; model: SessionModel } }) => void) => {
+            if (type === "session.next.model.switched") modelSwitchHandler = handler
+            return () => undefined
+          },
+        },
+        route: {
+          current: { name: "session", params: { sessionID: "session-1" } },
+          navigate: () => undefined,
+        },
+        state: {
+          path: { directory: "/tmp/openralph-test", worktree: "/tmp/openralph-test", state: input.statePath },
+          provider: input.providers ?? [],
+          session: {
+            get: () => (input.sessionModel ? ({ model: input.sessionModel } as never) : undefined),
+          },
+        },
+        ui: {
+          dialog: {
+            setSize: () => undefined,
+            replace: (render: () => unknown) => render(),
+            clear: () => undefined,
+          },
+          DialogPrompt: (props: { onConfirm?: (value: string) => void }) => {
+            promptProps = props
+            return props
+          },
+          DialogSelect: (props: DialogSelectProps) => {
+            selectProps = props
+            return props
+          },
+          DialogAlert: (props: unknown) => props,
+          DialogConfirm: (props: unknown) => props,
+          toast: () => undefined,
+        },
+      } as never,
+      input.options ?? {},
+      {} as never,
+    )
+
+    if (input.switchedModel) {
+      modelSwitchHandler?.({ properties: { sessionID: "session-1", model: input.switchedModel } })
+    }
+
+    const commands = registeredLayer?.commands ?? []
+    commands.find((command) => command.name === "openralph")?.run?.()
+    selectProps?.onSelect?.(selectProps.options[input.phase === "plan" ? 1 : 2])
+    promptProps?.onConfirm?.(input.prompt)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    return launcherInput
+  } finally {
+    for (const dispose of disposers) dispose()
+    launcherImplementation = defaultLauncherImplementation
+  }
+}

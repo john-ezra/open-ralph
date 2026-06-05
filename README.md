@@ -79,7 +79,7 @@ TUI plugin in `tui.json`:
 }
 ```
 
-All model options are optional. Command `--model` values override plugin options. If no model is resolved, OpenRalph omits `--model` and lets opencode use its default.
+All model options are optional. Command `--model` values override plugin options. For Plan and Build runs started from `/ralph`, OpenRalph uses the current TUI session's selected model as a final fallback before launching fresh child runs. Direct CLI/headless runs have no TUI-selected model available; if no model is resolved there, OpenRalph omits `--model` and lets opencode use its default.
 
 Server and TUI plugin options use the same shape. Direct CLI/headless runs can pass the same launcher options through `OPENRALPH_OPTIONS_JSON`; without that env var, `openralph plan/build` uses default options, including Docker enabled with image `openralph:local` and `.env*` masking enabled.
 
