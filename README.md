@@ -8,13 +8,13 @@ OpenRalph is a light opencode plugin/package that implements the Ralph workflow 
 
 ## Installation
 
-OpenRalph is distributed as the npm package `@john.ezra/openralph`. OpenRalph itself stays Bun/TypeScript-native. Direct package execution through `bunx @john.ezra/openralph ...` or an installed `openralph` binary requires Bun.
+OpenRalph is distributed as the npm package `@john-ezra/openralph`. OpenRalph itself stays Bun/TypeScript-native. Direct package execution through `bunx @john-ezra/openralph ...` or an installed `openralph` binary requires Bun.
 
 The normal install path is opencode's built-in plugin installer:
 
 1. Open opencode in the target project.
 2. Run `Install plugin` from the command palette/plugins UI.
-3. Enter `@john.ezra/openralph` at the `npm package name` prompt.
+3. Enter `@john-ezra/openralph` at the `npm package name` prompt.
 4. Leave scope as `local` for a project install, or press `Tab` to toggle to `global`.
 5. Restart opencode if needed.
 6. Run `/ralph`.
@@ -22,15 +22,15 @@ The normal install path is opencode's built-in plugin installer:
 CLI equivalent for non-TUI users:
 
 ```bash
-opencode plugin @john.ezra/openralph
-opencode plugin --global @john.ezra/openralph
+opencode plugin @john-ezra/openralph
+opencode plugin --global @john-ezra/openralph
 ```
 
 The opencode installer installs the npm package into opencode's plugin cache, detects both OpenRalph server and TUI targets, and patches the matching config files automatically. Local scope writes under `<worktree>/.opencode/` when run in a Git worktree; global scope writes under `~/.config/opencode/`.
 
 ## Advanced Manual Config
 
-Manual config is only needed when you want to bypass opencode's plugin installer or edit plugin options directly. Use `@john.ezra/openralph` for both server and TUI config; do not configure `@john.ezra/openralph/tui` as the plugin name.
+Manual config is only needed when you want to bypass opencode's plugin installer or edit plugin options directly. Use `@john-ezra/openralph` for both server and TUI config; do not configure `@john-ezra/openralph/tui` as the plugin name.
 
 Server plugin in `opencode.json`:
 
@@ -39,7 +39,7 @@ Server plugin in `opencode.json`:
   "$schema": "https://opencode.ai/config.json",
   "plugin": [
     [
-      "@john.ezra/openralph",
+      "@john-ezra/openralph",
       {
         "defineModel": "provider/heavy-model",
         "planModel": "provider/cheap-model",
@@ -61,7 +61,7 @@ TUI plugin in `tui.json`:
   "$schema": "https://opencode.ai/tui.json",
   "plugin": [
     [
-      "@john.ezra/openralph",
+      "@john-ezra/openralph",
       {
         "defineModel": "provider/heavy-model",
         "planModel": "provider/cheap-model",
@@ -89,7 +89,7 @@ On Windows, run OpenRalph from WSL2 with Docker Desktop's WSL integration enable
 Local, offline, and project-custom images remain supported. `openralph docker build` defaults to the local tag `openralph:local`; configure `"docker": { "image": "openralph:local" }` to use it instead of the prebuilt image. If you installed through opencode's plugin installer, the package bin may not be available on your shell `PATH`. Build the local image with direct package execution:
 
 ```bash
-bunx @john.ezra/openralph docker build
+bunx @john-ezra/openralph docker build
 ```
 
 If the `openralph` binary is already on `PATH`, such as from a global package install, AUR/Omarchy install, or local checkout, you can use:
@@ -101,7 +101,7 @@ openralph docker build
 Use a custom tag if desired:
 
 ```bash
-bunx @john.ezra/openralph docker build --tag openralph:rust
+bunx @john-ezra/openralph docker build --tag openralph:rust
 ```
 
 Projects can extend the local image with a small Dockerfile:
