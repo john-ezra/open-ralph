@@ -6,6 +6,12 @@ The format is based on Keep a Changelog, and this project uses semantic versioni
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-06-06
+
+### Changed
+
+- Updated public documentation and development branch workflow guidance.
+
 ## [0.3.1] - 2026-06-06
 
 ### Fixed
