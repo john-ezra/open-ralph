@@ -107,12 +107,16 @@ Use tags only after a successful build iteration with a new commit and clean wor
 
 ## Development Git Workflow
 
-- All code changes must happen on a short-lived branch, never directly on `main`.
-- Before any file edit or command that can modify project files, run `git branch --show-current` or `git status --short --branch` and confirm the branch is not `main` or `master`.
-- If the current branch is `main` or `master`, stop and create a branch before editing, such as `feature/<name>` or `fix/<name>`.
-- Keep `main` as the integration branch; merge reviewed/validated branch work back into `main`.
-- Push branches for collaboration or backup, then merge to `main` only after validation passes.
-- If accidental local edits happen on `main`, move them to a branch before committing unless the user explicitly approves a direct `main` commit.
+- Keep `main` stable, public, and release-ready; do not use it for day-to-day development.
+- Use `dev` as the integration branch for active iteration, Ralph loop testing, Docker validation, packaging checks, and pre-release stabilization.
+- All normal code changes must happen on short-lived branches created from `dev`, such as `feature/<name>`, `fix/<name>`, or `chore/<name>`.
+- Before any file edit or command that can modify project files, run `git branch --show-current` or `git status --short --branch` and confirm the branch is not `main`, `master`, or `dev`.
+- If the current branch is `main` or `master`, stop, create or switch to `dev`, then create a short-lived branch from `dev` before editing.
+- If the current branch is `dev`, create a short-lived branch from `dev` before editing; avoid direct commits to `dev` except controlled merges or explicitly approved administrative updates.
+- Merge reviewed/validated short-lived branches into `dev`; merge `dev` into `main` only for release-ready changes after validation passes.
+- For urgent public fixes, branch from `main`, merge the fix back into `main`, then back-merge or cherry-pick it into `dev`.
+- Push branches for collaboration or backup; publish release tags, packages, and default Docker images from `main` unless explicitly agreed otherwise.
+- If accidental local edits happen on `main`, `master`, or `dev`, move them to a short-lived branch before committing unless the user explicitly approves a direct commit.
 
 ## Safety Posture
 
