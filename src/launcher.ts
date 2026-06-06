@@ -77,6 +77,7 @@ export async function runOpenRalphLauncher(input: RunLauncherInput, deps: RunLau
     const docker = resolveRuntimeDockerOptions(input.options, expectedVersion)
     const isDefaultImage = input.options.docker?.image === undefined
     const inspectDockerImage = deps.inspectDockerImage ?? defaultInspectDockerImage
+    emitLauncherStatus(input, `OpenRalph checking Docker image ${docker.image}.\n`)
     let imageStatus = await inspectDockerImage(docker.image, input.cwd)
 
     if (!imageStatus.exists && isDefaultImage) {
@@ -99,6 +100,7 @@ export async function runOpenRalphLauncher(input: RunLauncherInput, deps: RunLau
         signal: input.signal,
       })
       if (pullResult.exitCode !== 0) throw new Error(formatDockerPullFailure(input.phase, parsed, docker.image, pullResult))
+      emitLauncherStatus(input, `OpenRalph Docker image pull completed for ${docker.image}. Verifying image metadata.\n`)
       imageStatus = await inspectDockerImage(docker.image, input.cwd)
     }
 

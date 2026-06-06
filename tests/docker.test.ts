@@ -299,9 +299,13 @@ describe("env masking", () => {
     const root = await mkdtemp(join(tmpdir(), "openralph-test-"))
     try {
       await mkdir(join(root, "nested"))
+      await mkdir(join(root, "runs"))
+      await mkdir(join(root, ".next"))
       await writeFile(join(root, ".env"), "SECRET=1")
       await writeFile(join(root, ".env.example"), "SECRET=")
       await writeFile(join(root, "nested", ".env.production"), "SECRET=2")
+      await writeFile(join(root, "runs", ".env.local"), "SECRET=ignored")
+      await writeFile(join(root, ".next", ".env.local"), "SECRET=ignored")
 
       expect((await detectMaskableEnvFiles(root)).map((path) => containerPath(root, path))).toEqual([
         "/workspace/.env",

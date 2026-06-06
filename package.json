@@ -1,6 +1,6 @@
 {
   "name": "@john-ezra/open-ralph",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "description": "Light opencode plugin for the Ralph workflow.",
   "license": "MIT",

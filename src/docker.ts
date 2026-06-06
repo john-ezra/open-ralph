@@ -33,8 +33,23 @@ export const CHROME_DEVTOOLS_MCP_COMMAND = [
 ] as const
 
 const ENV_EXAMPLE_FILES = new Set([".env.example", ".env.sample", ".env.template", ".env.dist"])
-const ENV_SCAN_SKIP_DIRS = new Set([".git", "node_modules", "dist", "coverage"])
+const ENV_SCAN_SKIP_DIRS = new Set([
+  ".cache",
+  ".git",
+  ".next",
+  ".turbo",
+  ".venv",
+  "__pycache__",
+  "build",
+  "coverage",
+  "dist",
+  "node_modules",
+  "runs",
+  "target",
+  "venv",
+])
 const DEFAULT_PULL_IDLE_STATUS_INTERVAL_MS = 30_000
+const DEFAULT_DOCKER_STARTUP_STATUS_INTERVAL_MS = 30_000
 const CONTAINER_GIT_CONFIG = [
   ["safe.directory", CONTAINER_WORKSPACE],
   ["commit.gpgsign", "false"],
@@ -51,6 +66,7 @@ export interface RunDockerLoopInput {
   captureOutput?: boolean
   onOutput?: (event: CommandOutputEvent) => void
   signal?: AbortSignal
+  startupStatusIntervalMs?: number
 }
 
 export interface BuildLocalDockerImageInput {
@@ -125,11 +141,13 @@ export async function runDockerLoop(input: RunDockerLoopInput): Promise<CommandR
   const parsed = parseLoopArgs(input.phase, input.rawArgs)
   const docker = input.docker ?? resolveRuntimeDockerOptions(input.options)
   const authPath = defaultAuthPath()
-  await requireReadableFile(authPath, "OpenCode auth file")
-
-  const envMasks = docker.maskEnv ? await prepareEnvMasks(input.projectRoot) : emptyEnvMasks()
-  const dockerToken = await prepareDockerToken()
+  let envMasks = emptyEnvMasks()
+  let dockerToken: (DockerToken & { cleanup: () => Promise<void> }) | undefined
   let activeChild: ReturnType<typeof startCommand>["child"] | undefined
+  let setupHeartbeat: DockerStatusHeartbeat | undefined
+  let runHeartbeat: DockerStatusHeartbeat | undefined
+  let setupStep = "checking OpenCode auth"
+  let lastDockerOutputAt = Date.now()
   let stopRequested = false
 
   const onSigint = () => {
@@ -148,8 +166,43 @@ export async function runDockerLoop(input: RunDockerLoopInput): Promise<CommandR
   else input.signal?.addEventListener("abort", onAbort, { once: true })
 
   try {
+    emitDockerStatus(input, `OpenRalph preparing Dockerized ${input.phase} loop on host.\n`)
+    setupHeartbeat = startDockerStatusHeartbeat(
+      input,
+      (elapsedMs) => `OpenRalph still preparing Dockerized ${input.phase} loop after ${formatDuration(elapsedMs)}; current step: ${setupStep}.\n`,
+    )
+
+    setupStep = "checking OpenCode auth"
+    emitDockerStatus(input, "OpenRalph checking host OpenCode auth for container mount.\n")
+    await requireReadableFile(authPath, "OpenCode auth file")
+
+    if (docker.maskEnv) {
+      setupStep = "scanning for .env* files to mask"
+      emitDockerStatus(input, "OpenRalph scanning repository for .env* files to mask in Docker.\n")
+      envMasks = await prepareEnvMasks(input.projectRoot)
+      emitDockerStatus(input, `OpenRalph prepared ${envMasks.mounts.length} Docker .env* mask mount${envMasks.mounts.length === 1 ? "" : "s"}.\n`)
+    } else {
+      emitDockerStatus(input, "OpenRalph Docker .env* masking disabled by configuration.\n")
+    }
+
+    setupStep = "creating Docker attestation token"
+    emitDockerStatus(input, "OpenRalph creating Docker attestation token.\n")
+    dockerToken = await prepareDockerToken()
+
+    setupStep = "reading host user and Git identity"
+    emitDockerStatus(input, "OpenRalph reading host user and Git identity for Docker.\n")
     const user = hostUser()
     const gitIdentity = input.phase === "plan" || input.phase === "build" ? await requireGitIdentity(input.projectRoot) : undefined
+    setupHeartbeat.stop()
+    setupHeartbeat = undefined
+
+    emitDockerStatus(input, `OpenRalph launching Docker container ${docker.image}.\n`)
+    lastDockerOutputAt = Date.now()
+    runHeartbeat = startDockerStatusHeartbeat(
+      input,
+      (elapsedMs) =>
+        `OpenRalph Docker container has not produced output after ${formatDuration(elapsedMs)} (${formatDuration(Date.now() - lastDockerOutputAt)} since last output). Docker may still be initializing the image filesystem.\n`,
+    )
     const running = startCommand(
       "docker",
       buildDockerArgs({
@@ -169,7 +222,10 @@ export async function runDockerLoop(input: RunDockerLoopInput): Promise<CommandR
         cwd: input.projectRoot,
         streamOutput: input.streamOutput ?? true,
         captureOutput: input.captureOutput ?? true,
-        onOutput: input.onOutput,
+        onOutput: (event) => {
+          lastDockerOutputAt = Date.now()
+          input.onOutput?.(event)
+        },
         signal: input.signal,
       },
     )
@@ -182,11 +238,17 @@ export async function runDockerLoop(input: RunDockerLoopInput): Promise<CommandR
     throw error
   } finally {
     activeChild = undefined
+    setupHeartbeat?.stop()
+    runHeartbeat?.stop()
     process.off("SIGINT", onSigint)
     input.signal?.removeEventListener("abort", onAbort)
-    await dockerToken.cleanup()
+    await dockerToken?.cleanup()
     await envMasks.cleanup()
   }
+}
+
+interface DockerStatusHeartbeat {
+  stop: () => void
 }
 
 export function buildDockerImageArgs(input: BuildDockerImageArgsInput = {}): string[] {
@@ -463,6 +525,29 @@ function readPackageVersion(packageRoot: string): string {
 function emitDockerPullStatus(input: PullDockerImageInput, chunk: string): void {
   input.onOutput?.({ stream: "stderr", chunk })
   if (input.streamOutput ?? true) process.stderr.write(chunk)
+}
+
+function emitDockerStatus(input: Pick<RunDockerLoopInput, "streamOutput" | "onOutput">, chunk: string): void {
+  input.onOutput?.({ stream: "stderr", chunk })
+  if (input.streamOutput ?? true) process.stderr.write(chunk)
+}
+
+function startDockerStatusHeartbeat(
+  input: Pick<RunDockerLoopInput, "streamOutput" | "onOutput" | "startupStatusIntervalMs">,
+  message: (elapsedMs: number) => string,
+): DockerStatusHeartbeat {
+  if ((input.streamOutput ?? true) === false && !input.onOutput) return { stop: () => {} }
+
+  const intervalMs = input.startupStatusIntervalMs ?? DEFAULT_DOCKER_STARTUP_STATUS_INTERVAL_MS
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) return { stop: () => {} }
+
+  const startedAt = Date.now()
+  const timer = setInterval(() => {
+    emitDockerStatus(input, message(Date.now() - startedAt))
+  }, intervalMs)
+  timer.unref?.()
+
+  return { stop: () => clearInterval(timer) }
 }
 
 function formatDuration(milliseconds: number): string {

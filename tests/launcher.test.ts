@@ -210,6 +210,7 @@ describe("runOpenRalphLauncher", () => {
         },
         pullDockerImage: async (input) => {
           pullCalled = true
+          expect(output.join("")).toContain("OpenRalph checking Docker image ghcr.io/john-ezra/open-ralph:1.2.3")
           expect(output.join("")).toContain("OpenRalph preparing Docker image ghcr.io/john-ezra/open-ralph:1.2.3")
           expect(output.join("")).toContain("No run artifacts will be created until the image is ready")
           expect(input.image).toBe("ghcr.io/john-ezra/open-ralph:1.2.3")
@@ -220,6 +221,7 @@ describe("runOpenRalphLauncher", () => {
         requireGitContext: async () => ({ root: "/repo", branch: "feature/test" }),
         runDockerLoop: async (input) => {
           dockerCalled = true
+          expect(output.join("")).toContain("OpenRalph Docker image pull completed for ghcr.io/john-ezra/open-ralph:1.2.3")
           expect(output.join("")).toContain("OpenRalph Docker image ready: ghcr.io/john-ezra/open-ralph:1.2.3")
           expect(output.join("")).toContain("Run artifacts should appear under runs/openralph-plan-*")
           expect(input.docker?.image).toBe("ghcr.io/john-ezra/open-ralph:1.2.3")
