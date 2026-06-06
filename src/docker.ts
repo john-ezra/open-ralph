@@ -149,7 +149,7 @@ export async function runDockerLoop(input: RunDockerLoopInput): Promise<CommandR
 
   try {
     const user = hostUser()
-    const gitIdentity = input.phase === "build" ? await requireGitIdentity(input.projectRoot) : undefined
+    const gitIdentity = input.phase === "plan" || input.phase === "build" ? await requireGitIdentity(input.projectRoot) : undefined
     const running = startCommand(
       "docker",
       buildDockerArgs({
@@ -361,7 +361,7 @@ export async function requireGitIdentity(cwd: string): Promise<GitIdentity> {
   const identity = await readGitIdentity(cwd)
   if (!identity) {
     throw new Error(
-      "Dockerized OpenRalph Build requires Git user.name and user.email in host or project Git config. Configure them before rerunning Dockerized builds.",
+      "Dockerized OpenRalph Plan and Build require Git user.name and user.email in host or project Git config. Configure them before rerunning Dockerized loops.",
     )
   }
   return identity

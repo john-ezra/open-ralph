@@ -203,6 +203,7 @@ Run artifacts may contain terminal output, command details, paths, and model tex
 ## Runtime Notes
 
 - Plan and Build require a Git worktree.
+- Plan commits `IMPLEMENTATION_PLAN.md` automatically when planning reaches `RALPH_PLAN_COMPLETE`; unrelated dirty files are left uncommitted and will still block Build.
 - Build requires a clean Git worktree before the first iteration. If local `.opencode/` plugin config is untracked or modified, commit it, ignore it, remove it, or use a global plugin install before Build.
 - `/ralph` is the only public TUI slash command. It selects Design, Plan, and Build. Design is a current-session requirements conversation; Plan and Build are external launcher loops.
 - Public prompt-backed Ralph commands are stale. OpenRalph deletes stale `ralph-define`, `ralph-plan`, and `ralph-build` command config entries when the server plugin loads and throws if one is executed anyway.
@@ -217,7 +218,7 @@ Run artifacts may contain terminal output, command details, paths, and model tex
 - Docker mode does not restrict network egress.
 - `.env*` masking is best-effort and does not cover other in-repo secret files such as `.npmrc`, private keys, cloud credentials, or service-account JSON.
 - Docker mode does not mount host home, host OpenCode config, Git config, SSH keys, GPG material, browser profiles, browser cookies, desktop sockets, or the Docker socket.
-- Dockerized OpenRalph Build requires host/project Git `user.name` and `user.email`. OpenRalph passes those values as author/committer env vars, disables commit/tag signing inside Docker, and rejects `--push` in Docker mode.
+- Dockerized OpenRalph Plan and Build require host/project Git `user.name` and `user.email`. OpenRalph passes those values as author/committer env vars, disables commit/tag signing inside Docker, and rejects Build `--push` in Docker mode.
 - Child iterations run `opencode run --dir <project-root> --command <internal-command> --dangerously-skip-permissions`.
 - Docker mode runs `openralph plan` or `openralph build` inside the container. It never replays public prompt-backed Ralph commands.
 - Child iterations never use `--continue`.
@@ -235,7 +236,7 @@ Use a dedicated branch or disposable clone for autonomous Ralph runs. Docker mod
 
 The Docker/TUI migration was smoke-tested with `opencode-ai@1.15.13` using a disposable fixture repo.
 
-- OpenRalph Plan selected from `/ralph` ran Docker with token attestation, produced `IMPLEMENTATION_PLAN.md`, and emitted `RALPH_PLAN_COMPLETE`.
+- OpenRalph Plan selected from `/ralph` ran Docker with token attestation, produced and committed `IMPLEMENTATION_PLAN.md`, and emitted `RALPH_PLAN_COMPLETE`.
 - OpenRalph Build selected from `/ralph` with args `1` ran Docker with token attestation, implemented one greeting task, passed `npm test`, and created a commit in the fixture repo.
 - Spoofed Docker markers and a direct container run without the mounted attestation token both failed before `runLoop()`.
 - Build tags are created only when the worktree is clean after a successful build commit; an untracked local `tui.json` in the fixture correctly prevented tagging.

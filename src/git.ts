@@ -42,6 +42,16 @@ export async function readWorktreeStatus(cwd: string): Promise<string[]> {
   return result.stdout.split(/\r?\n/).map((line) => line.trimEnd()).filter(Boolean)
 }
 
+export async function hasPathChanges(cwd: string, path: string): Promise<boolean> {
+  const result = await runGit(["status", "--porcelain", "--", path], cwd)
+  return result.stdout.trim() !== ""
+}
+
+export async function commitPath(cwd: string, path: string, message: string): Promise<void> {
+  await runGit(["add", "--", path], cwd)
+  await runGit(["commit", "--only", "-m", message, "--", path], cwd)
+}
+
 export async function readGitInfoExclude(cwd: string): Promise<string> {
   const result = await runGitCommand(["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"], cwd)
   if (result.exitCode !== 0) {

@@ -1,7 +1,17 @@
 import { parseLoopArgs, resolveModel, type LoopPhase, type OpenRalphOptions } from "./args.ts"
 import { createRunArtifacts, finishRunArtifacts, startIterationArtifacts } from "./artifacts.ts"
 import { startCommand, type CommandOutputEvent, type CommandResult } from "./exec.ts"
-import { requireGitContext, getHead, isWorktreeClean, createLightweightTag, pushCurrentBranch, readGitInfoExclude, readWorktreeStatus } from "./git.ts"
+import {
+  requireGitContext,
+  getHead,
+  isWorktreeClean,
+  createLightweightTag,
+  pushCurrentBranch,
+  readGitInfoExclude,
+  readWorktreeStatus,
+  hasPathChanges,
+  commitPath,
+} from "./git.ts"
 import { detectBuildSentinel, isPlanComplete } from "./sentinels.ts"
 import { createBuildTagName } from "./tags.ts"
 import { createHostLoopToken } from "./trust.ts"
@@ -32,6 +42,7 @@ export interface LoopSummary {
 }
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000
+const IMPLEMENTATION_PLAN_PATH = "IMPLEMENTATION_PLAN.md"
 
 export async function runLoop(input: RunLoopInput): Promise<LoopSummary> {
   const args = parseLoopArgs(input.phase, input.rawArgs)
@@ -233,7 +244,15 @@ export async function runLoop(input: RunLoopInput): Promise<LoopSummary> {
         state.consecutiveFailures = 0
         state.lastFailure = undefined
         if (planComplete) {
-          return finish("complete", "planning complete")
+          let planCommitted = false
+          try {
+            planCommitted = await commitImplementationPlanIfChanged(git.root)
+          } catch (error) {
+            return finish("failed", `planning complete but failed to commit ${IMPLEMENTATION_PLAN_PATH}: ${formatError(error)}`)
+          }
+
+          await warnIfDirtyAfterPlanning(git.root, warnings, streamOutput)
+          return finish("complete", planCommitted ? `planning complete; committed ${IMPLEMENTATION_PLAN_PATH}` : "planning complete")
         }
         continue
       }
@@ -354,6 +373,25 @@ function startChildHeartbeat(input: {
       clearInterval(timer)
     },
   }
+}
+
+async function commitImplementationPlanIfChanged(projectRoot: string): Promise<boolean> {
+  if (!(await hasPathChanges(projectRoot, IMPLEMENTATION_PLAN_PATH))) return false
+  await commitPath(projectRoot, IMPLEMENTATION_PLAN_PATH, "Update implementation plan")
+  return true
+}
+
+async function warnIfDirtyAfterPlanning(projectRoot: string, warnings: string[], streamOutput: boolean): Promise<void> {
+  const statusLines = await readWorktreeStatus(projectRoot)
+  if (statusLines.length === 0) return
+
+  const warning = [
+    "warning: worktree remains dirty after planning; Build will fail until these paths are committed, ignored, stashed, or removed:",
+    ...statusLines.slice(0, 12).map((line) => `  ${line}`),
+    ...(statusLines.length > 12 ? [`  ...and ${statusLines.length - 12} more`] : []),
+  ].join("\n")
+  warnings.push(warning)
+  if (streamOutput) process.stderr.write(`OpenRalph ${warning}\n`)
 }
 
 async function buildLoopChildEnv(executionMode: LoopExecutionMode | undefined): Promise<{

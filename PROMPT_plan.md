@@ -11,7 +11,7 @@
 
 3. Consider TODOs, placeholder implementations, skipped or flaky tests, minimal stubs, inconsistent patterns, missing validation, missing backpressure, and audit findings from recent completed `runs/openralph-*` artifacts when available. A run artifact is completed only when its `ralph.log` contains the final `OpenRalph <phase> run finished` section, such as `OpenRalph plan run finished` or `OpenRalph build run finished`. Ignore any run artifact directory without that section; the current run is being written concurrently and can contain incomplete or self-referential output. Do not persist notes about ignored current-run artifacts in `IMPLEMENTATION_PLAN.md`; those notes become stale as soon as the current run finishes.
 
-4. Plan only. Do not implement code. Do not commit. Do not push. Do not create tags.
+4. Plan only. Do not implement code. Do not commit. Do not push. Do not create tags. When planning is complete, the OpenRalph loop will commit `IMPLEMENTATION_PLAN.md` after this child run prints the completion sentinel.
 
 5. If specs are missing or inconsistent, document the issue clearly. Only create or refine specs when necessary to unblock accurate planning, and keep specs behavioral rather than implementation-prescriptive.
 

@@ -58,6 +58,7 @@ The server plugin should inject these commands only for authorized loop child pr
 - User interrupt is not a child process failure and must not be retried.
 - Push only when `--push` is passed and Docker mode is not used.
 - Plan/build loops write project-local run artifacts under `runs/openralph-<phase>-YYYYMMDD-HHMMSS/`; artifacts must not replace `IMPLEMENTATION_PLAN.md` as the work queue.
+- Plan commits `IMPLEMENTATION_PLAN.md` automatically only after a child reports `RALPH_PLAN_COMPLETE`; planning children must not commit directly.
 - `runLoop()` must not independently launch Docker or inspect `docker.enabled`; the shared launcher resolves `docker-host-launch`, `host-explicit`, `host-config-default`, or `container-attested` once.
 
 ## Model Selection
@@ -125,7 +126,7 @@ Rationale:
 - TUI Design mode is host-side and injects a Ralph Design prompt into the current session after an optional initial idea prompt.
 - Docker mode mounts the repo read/write at `/workspace`, mounts OpenCode auth read-only, masks real `.env*` files by default, and does not mount host home, SSH, config, desktop sockets, or the Docker socket.
 - Docker mode does not mount host Git config, SSH keys, GPG material, browser profiles, browser cookies, or desktop sockets.
-- Dockerized OpenRalph Build requires host/project Git `user.name` and `user.email`; OpenRalph passes them through author/committer environment variables, disables commit/tag signing inside Docker, and marks `/workspace` as a safe Git directory.
+- Dockerized OpenRalph Plan and Build require host/project Git `user.name` and `user.email`; OpenRalph passes them through author/committer environment variables, disables commit/tag signing inside Docker, and marks `/workspace` as a safe Git directory.
 - The default prebuilt/local image includes Bun, Node 22, npm/npx/corepack, Git, Bash, curl, Python 3, native build tools, ripgrep, Google Chrome stable, screenshot-friendly fonts, `opencode-ai@1.15.13`, and `chrome-devtools-mcp@1.1.1`.
 - Chrome DevTools MCP runs through `/opt/openralph/bin/chrome-devtools-mcp-wrapper`, which starts isolated headless Chrome on a loopback debugging port with a temporary profile and connects MCP via `--browser-url`.
 - The user still chooses their own isolation strategy and risk level.

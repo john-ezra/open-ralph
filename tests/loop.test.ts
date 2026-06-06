@@ -41,6 +41,50 @@ describe("runLoop heartbeat", () => {
   })
 })
 
+describe("runLoop plan completion", () => {
+  test("commits implementation plan changes when planning completes", async () => {
+    await withFakeOpenCode("plan-update", async (root) => {
+      await runGit(root, ["rm", "IMPLEMENTATION_PLAN.md"])
+      await runGit(root, ["commit", "-m", "Remove implementation plan"])
+
+      const summary = await runPlan(root)
+
+      expect(summary.status).toBe("complete")
+      expect(summary.message).toBe("planning complete; committed IMPLEMENTATION_PLAN.md")
+      expect(summary.launched).toBe(1)
+
+      const head = await runGit(root, ["log", "--oneline", "-1"])
+      expect(head.stdout).toContain("Update implementation plan")
+
+      const plan = await readFile(join(root, "IMPLEMENTATION_PLAN.md"), "utf8")
+      expect(plan).toContain("Planned from specs")
+
+      const status = await runGit(root, ["status", "--porcelain"])
+      expect(status.stdout.trim()).toBe("")
+
+      const log = await readFile(join(summary.artifacts, "ralph.log"), "utf8")
+      expect(log).toContain("message: planning complete; committed IMPLEMENTATION_PLAN.md")
+    })
+  })
+
+  test("commits only the implementation plan and warns when other dirty files remain", async () => {
+    await withFakeOpenCode("plan-update-with-dirty", async (root) => {
+      const summary = await runPlan(root)
+
+      expect(summary.status).toBe("complete")
+      expect(summary.message).toBe("planning complete; committed IMPLEMENTATION_PLAN.md")
+      expect(summary.warnings.join("\n")).toContain("worktree remains dirty after planning")
+      expect(summary.warnings.join("\n")).toContain("?? scratch.txt")
+
+      const committedFiles = await runGit(root, ["show", "--name-only", "--pretty=format:", "HEAD"])
+      expect(committedFiles.stdout.trim().split(/\r?\n/).filter(Boolean)).toEqual(["IMPLEMENTATION_PLAN.md"])
+
+      const status = await runGit(root, ["status", "--porcelain"])
+      expect(status.stdout).toContain("?? scratch.txt")
+    })
+  })
+})
+
 describe("runLoop build completion", () => {
   test("completes without tagging when no work remains and the worktree is clean", async () => {
     await withFakeOpenCode("complete-clean", async (root) => {
@@ -143,6 +187,10 @@ describe("runLoop build completion", () => {
   })
 })
 
+async function runPlan(root: string, rawArgs = "1"): Promise<LoopSummary> {
+  return runLoop({ phase: "plan", rawArgs, cwd: root, options: {}, streamOutput: false })
+}
+
 async function runBuild(root: string, rawArgs = "1"): Promise<LoopSummary> {
   return runLoop({ phase: "build", rawArgs, cwd: root, options: {}, streamOutput: false })
 }
@@ -194,6 +242,15 @@ case "\${OPENRALPH_TEST_SCENARIO:-}" in
   plan-delayed-output)
     sleep 0.2
     printf 'delayed plan output\n'
+    printf 'RALPH_PLAN_COMPLETE\n'
+    ;;
+  plan-update)
+    printf -- '- [ ] Planned from specs\n' > IMPLEMENTATION_PLAN.md
+    printf 'RALPH_PLAN_COMPLETE\n'
+    ;;
+  plan-update-with-dirty)
+    printf -- '- [ ] Planned from specs\n' > IMPLEMENTATION_PLAN.md
+    printf 'scratch\n' > scratch.txt
     printf 'RALPH_PLAN_COMPLETE\n'
     ;;
   complete-clean)
