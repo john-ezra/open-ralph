@@ -62,6 +62,30 @@ describe("runLoop build completion", () => {
     })
   })
 
+  test("fails before the first build iteration when the worktree starts dirty", async () => {
+    await withFakeOpenCode("complete-commit", async (root) => {
+      await mkdir(join(root, ".opencode"))
+      await writeFile(join(root, ".opencode", "opencode.json"), "{}\n")
+
+      const summary = await runBuild(root)
+
+      expect(summary.status).toBe("failed")
+      expect(summary.launched).toBe(0)
+      expect(summary.tagged).toBe(0)
+      expect(summary.message).toContain("Build requires a clean Git worktree")
+      expect(summary.message).toContain(".opencode/")
+      expect(summary.message).toContain("global plugin install")
+
+      const tags = await runGit(root, ["tag", "--list", "openralph/build-*"])
+      expect(tags.stdout.trim()).toBe("")
+
+      const log = await readFile(join(summary.artifacts, "ralph.log"), "utf8")
+      expect(log).toContain("OpenRalph build run finished")
+      expect(log).toContain("launched iterations: 0")
+      expect(log).not.toContain("iter-001 started")
+    })
+  })
+
   test("tags a final completion that created a clean commit", async () => {
     await withFakeOpenCode("complete-commit", async (root) => {
       const summary = await runBuild(root)

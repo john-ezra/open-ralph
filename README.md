@@ -203,6 +203,7 @@ Run artifacts may contain terminal output, command details, paths, and model tex
 ## Runtime Notes
 
 - Plan and Build require a Git worktree.
+- Build requires a clean Git worktree before the first iteration. If local `.opencode/` plugin config is untracked or modified, commit it, ignore it, remove it, or use a global plugin install before Build.
 - `/ralph` is the only public TUI slash command. It selects Design, Plan, and Build. Design is a current-session requirements conversation; Plan and Build are external launcher loops.
 - Public prompt-backed Ralph commands are stale. OpenRalph deletes stale `ralph-define`, `ralph-plan`, and `ralph-build` command config entries when the server plugin loads and throws if one is executed anyway.
 - `/ralph-plan-iteration` and `/ralph-build-iteration` are internal prompt-backed commands and are exposed only to authorized loop child processes.

@@ -34,6 +34,7 @@ export const CHROME_DEVTOOLS_MCP_COMMAND = [
 
 const ENV_EXAMPLE_FILES = new Set([".env.example", ".env.sample", ".env.template", ".env.dist"])
 const ENV_SCAN_SKIP_DIRS = new Set([".git", "node_modules", "dist", "coverage"])
+const DEFAULT_PULL_IDLE_STATUS_INTERVAL_MS = 30_000
 const CONTAINER_GIT_CONFIG = [
   ["safe.directory", CONTAINER_WORKSPACE],
   ["commit.gpgsign", "false"],
@@ -81,6 +82,7 @@ export interface PullDockerImageInput {
   captureOutput?: boolean
   onOutput?: (event: CommandOutputEvent) => void
   signal?: AbortSignal
+  idleStatusIntervalMs?: number
 }
 
 export interface DockerMount {
@@ -238,13 +240,35 @@ export async function inspectDockerImage(image: string, cwd = process.cwd()): Pr
 }
 
 export async function pullDockerImage(input: PullDockerImageInput): Promise<CommandResult> {
-  return startCommand("docker", ["pull", input.image], {
-    cwd: input.cwd ?? process.cwd(),
-    streamOutput: input.streamOutput ?? true,
-    captureOutput: input.captureOutput ?? true,
-    onOutput: input.onOutput,
-    signal: input.signal,
-  }).result
+  const idleStatusIntervalMs = input.idleStatusIntervalMs ?? DEFAULT_PULL_IDLE_STATUS_INTERVAL_MS
+  let lastOutputAt = Date.now()
+  const heartbeat =
+    idleStatusIntervalMs > 0
+      ? setInterval(() => {
+          const idleMs = Date.now() - lastOutputAt
+          if (idleMs < idleStatusIntervalMs) return
+
+          emitDockerPullStatus(
+            input,
+            `OpenRalph still pulling Docker image ${input.image}; no Docker output for ${formatDuration(idleMs)}. Docker may still be extracting layers after "Download complete".\n`,
+          )
+        }, idleStatusIntervalMs)
+      : undefined
+
+  try {
+    return await startCommand("docker", ["pull", input.image], {
+      cwd: input.cwd ?? process.cwd(),
+      streamOutput: input.streamOutput ?? true,
+      captureOutput: input.captureOutput ?? true,
+      onOutput: (event) => {
+        lastOutputAt = Date.now()
+        input.onOutput?.(event)
+      },
+      signal: input.signal,
+    }).result
+  } finally {
+    if (heartbeat) clearInterval(heartbeat)
+  }
 }
 
 export function readOpenRalphPackageVersion(packageRoot = defaultPackageRoot()): string {
@@ -434,6 +458,17 @@ function readPackageVersion(packageRoot: string): string {
     throw new Error(`OpenRalph package.json at ${packageRoot} does not contain a string version`)
   }
   return (parsed as { version: string }).version
+}
+
+function emitDockerPullStatus(input: PullDockerImageInput, chunk: string): void {
+  input.onOutput?.({ stream: "stderr", chunk })
+  if (input.streamOutput ?? true) process.stderr.write(chunk)
+}
+
+function formatDuration(milliseconds: number): string {
+  const seconds = Math.max(1, Math.floor(milliseconds / 1000))
+  if (seconds < 60) return `${seconds}s`
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 }
 
 function readDockerLabels(value: unknown): Record<string, string> | undefined {

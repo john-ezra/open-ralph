@@ -1,6 +1,6 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { delimiter, join } from "node:path"
 import { describe, expect, test } from "bun:test"
 import {
   buildContainerConfig,
@@ -13,6 +13,7 @@ import {
   detectMaskableEnvFiles,
   IMAGE_PLUGIN_PATH,
   OPENRALPH_IMAGE_VERSION_LABEL,
+  pullDockerImage,
   resolveRuntimeDockerOptions,
   shouldMaskEnvFile,
 } from "../src/docker.ts"
@@ -230,6 +231,58 @@ describe("Docker image workflow", () => {
     expect(workflow).toContain("org.openralph.version=${{ steps.version.outputs.version }}")
     expect(workflow).toContain('EXPECTED_TAG="v${VERSION}"')
     expect(workflow).not.toContain(":latest")
+  })
+})
+
+describe("pullDockerImage", () => {
+  test("emits idle heartbeat while Docker pull is quiet", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openralph-docker-test-"))
+    const originalPath = process.env.PATH
+
+    try {
+      const bin = join(root, "bin")
+      await mkdir(bin)
+      const docker = join(bin, "docker")
+      await writeFile(
+        docker,
+        `#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$1" = "pull" ]; then
+  sleep 0.08
+  printf 'pull complete\n'
+  exit 0
+fi
+
+printf 'unexpected docker args: %s\n' "$*" >&2
+exit 2
+`,
+      )
+      await chmod(docker, 0o755)
+      process.env.PATH = `${bin}${delimiter}${originalPath ?? ""}`
+
+      const output: Array<{ stream: string; chunk: string }> = []
+      const result = await pullDockerImage({
+        image: "openralph:test",
+        cwd: root,
+        streamOutput: false,
+        captureOutput: true,
+        idleStatusIntervalMs: 10,
+        onOutput: (event) => output.push(event),
+      })
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain("pull complete")
+
+      const heartbeat = output.find((event) => event.chunk.includes("still pulling Docker image openralph:test"))
+      expect(heartbeat?.stream).toBe("stderr")
+      expect(heartbeat?.chunk).toContain("no Docker output for")
+      expect(heartbeat?.chunk).toContain('after "Download complete"')
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH
+      else process.env.PATH = originalPath
+      await rm(root, { recursive: true, force: true })
+    }
   })
 })
 

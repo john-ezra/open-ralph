@@ -1,7 +1,7 @@
 import { parseLoopArgs, resolveModel, type LoopPhase, type OpenRalphOptions } from "./args.ts"
 import { createRunArtifacts, finishRunArtifacts, startIterationArtifacts } from "./artifacts.ts"
 import { startCommand, type CommandOutputEvent, type CommandResult } from "./exec.ts"
-import { requireGitContext, getHead, isWorktreeClean, createLightweightTag, pushCurrentBranch, readGitInfoExclude } from "./git.ts"
+import { requireGitContext, getHead, isWorktreeClean, createLightweightTag, pushCurrentBranch, readGitInfoExclude, readWorktreeStatus } from "./git.ts"
 import { detectBuildSentinel, isPlanComplete } from "./sentinels.ts"
 import { createBuildTagName } from "./tags.ts"
 import { createHostLoopToken } from "./trust.ts"
@@ -65,6 +65,18 @@ export async function runLoop(input: RunLoopInput): Promise<LoopSummary> {
     activeHeartbeat: undefined as ChildHeartbeat | undefined,
   }
 
+  const runId = input.phase === "build" ? artifacts.timestampId : undefined
+  const finish = async (status: LoopSummary["status"], message: string): Promise<LoopSummary> => {
+    const result = summary(input.phase, status, message, state, warnings, artifacts.dir)
+    await finishRunArtifacts(artifacts, result)
+    return result
+  }
+
+  if (input.phase === "build") {
+    const statusLines = await readWorktreeStatus(git.root)
+    if (statusLines.length > 0) return finish("failed", formatBuildDirtyPreflightMessage(statusLines))
+  }
+
   const requestStop = (force: boolean, announce: boolean) => {
     if (!state.stopRequested) {
       state.stopRequested = true
@@ -95,14 +107,6 @@ export async function runLoop(input: RunLoopInput): Promise<LoopSummary> {
   if (input.signal?.aborted) onAbort()
   else input.signal?.addEventListener("abort", onAbort, { once: true })
   try {
-    const runId = input.phase === "build" ? artifacts.timestampId : undefined
-
-    const finish = async (status: LoopSummary["status"], message: string): Promise<LoopSummary> => {
-      const result = summary(input.phase, status, message, state, warnings, artifacts.dir)
-      await finishRunArtifacts(artifacts, result)
-      return result
-    }
-
     const tagCleanBuildCommit = async (dirtyMessage: string): Promise<LoopSummary | undefined> => {
       if (!(await isWorktreeClean(git.root))) {
         return finish("failed", dirtyMessage)
@@ -405,6 +409,25 @@ function hostModeWarning(mode: LoopExecutionMode | undefined): string | undefine
     return "warning: --no-docker selected; child iterations run on the host with --dangerously-skip-permissions"
   }
   return "warning: host mode runs child iterations on this machine with --dangerously-skip-permissions"
+}
+
+export function formatBuildDirtyPreflightMessage(statusLines: string[]): string {
+  const lines = [
+    "Build requires a clean Git worktree before starting.",
+    "Commit, stash, remove, or ignore existing changes before rerunning OpenRalph Build.",
+  ]
+
+  if (hasOpenCodeConfigStatus(statusLines)) {
+    lines.push("Local .opencode/ plugin config is dirty; commit it, add it to .gitignore, remove it, or use a global plugin install.")
+  }
+
+  lines.push("Dirty paths:", ...statusLines.slice(0, 12).map((line) => `  ${line}`))
+  if (statusLines.length > 12) lines.push(`  ...and ${statusLines.length - 12} more`)
+  return lines.join("\n")
+}
+
+function hasOpenCodeConfigStatus(statusLines: string[]): boolean {
+  return statusLines.some((line) => /(^| )\.opencode(\/|$)/.test(line) || / -> \.opencode(\/|$)/.test(line))
 }
 
 function recordFailure(

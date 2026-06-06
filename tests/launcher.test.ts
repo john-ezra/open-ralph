@@ -194,9 +194,10 @@ describe("runOpenRalphLauncher", () => {
     let dockerCalled = false
     let pullCalled = false
     let inspectCalls = 0
+    const output: string[] = []
 
     const result = await runOpenRalphLauncher(
-      { phase: "plan", rawArgs: "5", cwd: "/repo", options: {} },
+      { phase: "plan", rawArgs: "5", cwd: "/repo", options: {}, onOutput: (event) => output.push(event.chunk) },
       {
         env: {},
         trust: noContainer,
@@ -209,6 +210,8 @@ describe("runOpenRalphLauncher", () => {
         },
         pullDockerImage: async (input) => {
           pullCalled = true
+          expect(output.join("")).toContain("OpenRalph preparing Docker image ghcr.io/john-ezra/open-ralph:1.2.3")
+          expect(output.join("")).toContain("No run artifacts will be created until the image is ready")
           expect(input.image).toBe("ghcr.io/john-ezra/open-ralph:1.2.3")
           expect(input.cwd).toBe("/repo")
           return { exitCode: 0, signal: null, stdout: "pulled", stderr: "" }
@@ -217,6 +220,8 @@ describe("runOpenRalphLauncher", () => {
         requireGitContext: async () => ({ root: "/repo", branch: "feature/test" }),
         runDockerLoop: async (input) => {
           dockerCalled = true
+          expect(output.join("")).toContain("OpenRalph Docker image ready: ghcr.io/john-ezra/open-ralph:1.2.3")
+          expect(output.join("")).toContain("Run artifacts should appear under runs/openralph-plan-*")
           expect(input.docker?.image).toBe("ghcr.io/john-ezra/open-ralph:1.2.3")
           return {
             exitCode: 0,
@@ -232,6 +237,41 @@ describe("runOpenRalphLauncher", () => {
     expect(inspectCalls).toBe(2)
     expect(dockerCalled).toBe(true)
     expect(result.summary).toContain("OpenRalph plan Docker execution completed")
+  })
+
+  test("fails dirty Docker build before pulling or running the container", async () => {
+    let inspectCalled = false
+    let pullCalled = false
+    let dockerCalled = false
+
+    await expect(
+      runOpenRalphLauncher(
+        { phase: "build", rawArgs: "1", cwd: "/repo", options: {} },
+        {
+          env: {},
+          trust: noContainer,
+          commandExists: allCommandsExist,
+          requireGitContext: async () => ({ root: "/repo", branch: "feature/test" }),
+          readWorktreeStatus: async () => ["?? .opencode/"],
+          inspectDockerImage: async () => {
+            inspectCalled = true
+            return { exists: false }
+          },
+          pullDockerImage: async () => {
+            pullCalled = true
+            throw new Error("unexpected Docker pull")
+          },
+          runDockerLoop: async () => {
+            dockerCalled = true
+            throw new Error("unexpected Docker call")
+          },
+        },
+      ),
+    ).rejects.toThrow("Build requires a clean Git worktree")
+
+    expect(inspectCalled).toBe(false)
+    expect(pullCalled).toBe(false)
+    expect(dockerCalled).toBe(false)
   })
 
   test("does not pull missing custom Docker images", async () => {
@@ -328,6 +368,8 @@ describe("runOpenRalphLauncher", () => {
           env: {},
           trust: noContainer,
           commandExists: allCommandsExist,
+          requireGitContext: async () => ({ root: "/repo", branch: "feature/test" }),
+          readWorktreeStatus: async () => [],
           inspectDockerImage: async () => ({ exists: true }),
           readPackageVersion: readCurrentVersion,
         },
@@ -348,6 +390,7 @@ describe("runOpenRalphLauncher", () => {
           inspectDockerImage: currentImage,
           readPackageVersion: readCurrentVersion,
           requireGitContext: async () => ({ root: "/repo", branch: "feature/test" }),
+          readWorktreeStatus: async () => [],
           runDockerLoop: async () => ({
             exitCode: 2,
             signal: null,
@@ -376,6 +419,7 @@ describe("runOpenRalphLauncher", () => {
           inspectDockerImage: currentImage,
           readPackageVersion: readCurrentVersion,
           requireGitContext: async () => ({ root: "/repo", branch: "feature/test" }),
+          readWorktreeStatus: async () => [],
           runDockerLoop: async () => ({
             exitCode: 0,
             signal: null,

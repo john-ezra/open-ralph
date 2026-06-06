@@ -34,8 +34,12 @@ export async function getHead(cwd: string): Promise<string | undefined> {
 }
 
 export async function isWorktreeClean(cwd: string): Promise<boolean> {
+  return (await readWorktreeStatus(cwd)).length === 0
+}
+
+export async function readWorktreeStatus(cwd: string): Promise<string[]> {
   const result = await runGit(["status", "--porcelain"], cwd)
-  return result.stdout.trim() === ""
+  return result.stdout.split(/\r?\n/).map((line) => line.trimEnd()).filter(Boolean)
 }
 
 export async function readGitInfoExclude(cwd: string): Promise<string> {

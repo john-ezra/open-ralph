@@ -8,8 +8,8 @@ import {
   runDockerLoop,
 } from "./docker.ts"
 import { commandExists as defaultCommandExists, type CommandOutputEvent, type CommandResult } from "./exec.ts"
-import { requireGitContext } from "./git.ts"
-import { formatSummary, runLoop, type LoopSummary } from "./loop.ts"
+import { requireGitContext, readWorktreeStatus as defaultReadWorktreeStatus } from "./git.ts"
+import { formatBuildDirtyPreflightMessage, formatSummary, runLoop, type LoopSummary } from "./loop.ts"
 import { attestDockerEnvironment, hasDockerMarker, type TrustDeps } from "./trust.ts"
 
 export type LauncherMode = "docker-host-launch" | "host-explicit" | "host-config-default" | "container-attested"
@@ -42,6 +42,7 @@ export interface RunLauncherDeps {
   inspectDockerImage?: typeof defaultInspectDockerImage
   pullDockerImage?: typeof defaultPullDockerImage
   readPackageVersion?: typeof defaultReadPackageVersion
+  readWorktreeStatus?: typeof defaultReadWorktreeStatus
   trust?: TrustDeps
 }
 
@@ -65,6 +66,13 @@ export async function runOpenRalphLauncher(input: RunLauncherInput, deps: RunLau
   await preflightCommands(mode, deps.commandExists ?? defaultCommandExists)
 
   if (mode === "docker-host-launch") {
+    let git: Awaited<ReturnType<typeof requireGitContext>> | undefined
+    if (input.phase === "build") {
+      git = await (deps.requireGitContext ?? requireGitContext)(input.cwd)
+      const statusLines = await (deps.readWorktreeStatus ?? defaultReadWorktreeStatus)(git.root)
+      if (statusLines.length > 0) throw new Error(formatBuildDirtyPreflightMessage(statusLines))
+    }
+
     const expectedVersion = (deps.readPackageVersion ?? defaultReadPackageVersion)()
     const docker = resolveRuntimeDockerOptions(input.options, expectedVersion)
     const isDefaultImage = input.options.docker?.image === undefined
@@ -72,6 +80,16 @@ export async function runOpenRalphLauncher(input: RunLauncherInput, deps: RunLau
     let imageStatus = await inspectDockerImage(docker.image, input.cwd)
 
     if (!imageStatus.exists && isDefaultImage) {
+      emitLauncherStatus(
+        input,
+        [
+          `OpenRalph preparing Docker image ${docker.image}.`,
+          "No run artifacts will be created until the image is ready and the container starts.",
+          'First-time pulls can take several minutes; Docker may continue extracting after "Download complete".',
+          "",
+        ].join("\n"),
+      )
+
       const pullResult = await (deps.pullDockerImage ?? defaultPullDockerImage)({
         image: docker.image,
         cwd: input.cwd,
@@ -90,7 +108,17 @@ export async function runOpenRalphLauncher(input: RunLauncherInput, deps: RunLau
       throw new Error(formatStaleDockerImage(input.phase, parsed, docker.image, expectedVersion, imageStatus.version, isDefaultImage))
     }
 
-    const git = await (deps.requireGitContext ?? requireGitContext)(input.cwd)
+    git ??= await (deps.requireGitContext ?? requireGitContext)(input.cwd)
+
+    emitLauncherStatus(
+      input,
+      [
+        `OpenRalph Docker image ready: ${docker.image}. Starting Dockerized ${input.phase} loop.`,
+        `Run artifacts should appear under runs/openralph-${input.phase}-* shortly after the container starts.`,
+        "",
+      ].join("\n"),
+    )
+
     const result = await (deps.runDockerLoop ?? runDockerLoop)({
       phase: input.phase,
       rawArgs: input.rawArgs,
@@ -333,6 +361,11 @@ function noDockerCommand(phase: LoopPhase, parsed: ParsedLoopArgs): string {
 
 function commandOutput(result: CommandResult): string {
   return `${result.stdout}\n${result.stderr}`.trim()
+}
+
+function emitLauncherStatus(input: RunLauncherInput, chunk: string): void {
+  input.onOutput?.({ stream: "stderr", chunk })
+  if (input.streamOutput) process.stderr.write(chunk)
 }
 
 function translateContainerPaths(value: string | undefined, projectRoot: string | undefined): string | undefined {
