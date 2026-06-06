@@ -223,7 +223,7 @@ export function formatDockerPullFailure(phase: LoopPhase, parsed: ParsedLoopArgs
     "Verify the matching GHCR image is published and public, or fix Docker network/auth access.",
     "",
     "For local/offline use, build a local image and configure docker.image to openralph:local:",
-    "  bunx open-ralph docker build",
+    "  bunx @john-ezra/open-ralph docker build",
     "",
     "If you intentionally want to run this loop on the host, rerun with:",
     `  ${noDockerCommand(phase, parsed)}`,
@@ -278,7 +278,7 @@ function formatMissingDockerImage(phase: LoopPhase, parsed: ParsedLoopArgs, imag
   }
 
   lines.push(
-    "  bunx open-ralph docker build",
+    "  bunx @john-ezra/open-ralph docker build",
     "",
     "If you intentionally want to run this loop on the host, rerun with:",
     `  ${noDockerCommand(phase, parsed)}`,
@@ -308,13 +308,13 @@ function formatStaleDockerImage(
       `  docker rmi ${image}`,
       "",
       "For local/offline use, build a local image and configure docker.image to openralph:local:",
-      "  bunx open-ralph docker build",
+      "  bunx @john-ezra/open-ralph docker build",
     )
   } else {
     lines.push(
       "Build or pull the configured image manually.",
       "For local OpenRalph image builds:",
-      "  bunx open-ralph docker build",
+      "  bunx @john-ezra/open-ralph docker build",
     )
   }
 

@@ -187,7 +187,7 @@ case "\${OPENRALPH_TEST_SCENARIO:-}" in
     ;;
   exclude-mutation)
     mkdir -p .opencode
-    printf '{"plugin":["open-ralph"]}\n' > .opencode/opencode.json
+    printf '{"plugin":["@john-ezra/open-ralph"]}\n' > .opencode/opencode.json
     printf '.opencode/\n' >> .git/info/exclude
     printf 'complete\n' >> result.txt
     git add result.txt

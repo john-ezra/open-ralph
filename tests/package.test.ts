@@ -6,7 +6,7 @@ describe("package metadata", () => {
   test("publishes the Bun/TypeScript package shape", async () => {
     const pkg = JSON.parse(await readFile(join(import.meta.dir, "..", "package.json"), "utf8"))
 
-    expect(pkg.name).toBe("open-ralph")
+    expect(pkg.name).toBe("@john-ezra/open-ralph")
     expect(pkg.private).toBeUndefined()
     expect(pkg.license).toBe("MIT")
     expect(pkg.main).toBe("./src/plugin.ts")

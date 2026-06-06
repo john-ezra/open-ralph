@@ -1,5 +1,5 @@
 {
-  "name": "open-ralph",
+  "name": "@john-ezra/open-ralph",
   "version": "0.3.0",
   "type": "module",
   "description": "Light opencode plugin for the Ralph workflow.",
