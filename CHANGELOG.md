@@ -6,6 +6,20 @@ The format is based on Keep a Changelog, and this project uses semantic versioni
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-06-06
+
+### Fixed
+
+- Committed `IMPLEMENTATION_PLAN.md` automatically after planning reports completion.
+- Improved Docker preparation status output and Plan/Build preflight handling.
+
+## [0.3.0] - 2026-06-05
+
+### Changed
+
+- Renamed the public package and Docker image to `@john-ezra/open-ralph` and `ghcr.io/john-ezra/open-ralph`.
+- Updated package metadata and docs for the scoped npm package.
+
 ## [0.2.1] - 2026-06-05
 
 ### Added
