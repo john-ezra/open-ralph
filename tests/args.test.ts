@@ -109,7 +109,7 @@ describe("validateOptions", () => {
     })
     expect(resolveDockerOptions(validateOptions({}), defaultPublishedDockerImage("1.2.3"))).toEqual({
       enabled: true,
-      image: "ghcr.io/john-ezra/openralph:1.2.3",
+      image: "ghcr.io/john-ezra/open-ralph:1.2.3",
       maskEnv: true,
     })
   })

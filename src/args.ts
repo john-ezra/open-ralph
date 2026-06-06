@@ -1,7 +1,7 @@
 export type LoopPhase = "plan" | "build"
 
 export const DEFAULT_LOCAL_DOCKER_IMAGE = "openralph:local"
-export const DEFAULT_DOCKER_IMAGE_REPOSITORY = "ghcr.io/john-ezra/openralph"
+export const DEFAULT_DOCKER_IMAGE_REPOSITORY = "ghcr.io/john-ezra/open-ralph"
 
 const DOCKER_DOMAIN_COMPONENT = "[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
 const DOCKER_NAME_COMPONENT = "[a-z0-9]+(?:(?:[._-]+|__)[a-z0-9]+)*"

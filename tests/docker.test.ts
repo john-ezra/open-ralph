@@ -167,7 +167,7 @@ describe("resolveRuntimeDockerOptions", () => {
   test("defaults runtime Docker to the matching published image", () => {
     expect(resolveRuntimeDockerOptions({}, "1.2.3")).toEqual({
       enabled: true,
-      image: "ghcr.io/john-ezra/openralph:1.2.3",
+      image: "ghcr.io/john-ezra/open-ralph:1.2.3",
       maskEnv: true,
     })
   })
@@ -225,7 +225,7 @@ describe("Docker image workflow", () => {
   test("publishes matching versioned GHCR images", async () => {
     const workflow = await readFile(join(import.meta.dir, "..", ".github", "workflows", "docker-image.yml"), "utf8")
 
-    expect(workflow).toContain("ghcr.io/john-ezra/openralph")
+    expect(workflow).toContain("ghcr.io/john-ezra/open-ralph")
     expect(workflow).toContain("linux/amd64,linux/arm64")
     expect(workflow).toContain("org.openralph.version=${{ steps.version.outputs.version }}")
     expect(workflow).toContain('EXPECTED_TAG="v${VERSION}"')

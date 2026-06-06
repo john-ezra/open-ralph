@@ -16,7 +16,7 @@ The format is based on Keep a Changelog, and this project uses semantic versioni
 
 ### Added
 
-- Versioned prebuilt Docker image support for `ghcr.io/john-ezra/openralph:<package-version>`.
+- Versioned prebuilt Docker image support for `ghcr.io/john-ezra/open-ralph:<package-version>`.
 - Automatic pull of the matching default prebuilt Docker image when it is missing locally.
 - GitHub Actions workflow for publishing multi-platform `linux/amd64` and `linux/arm64` images to GHCR.
 

@@ -39,7 +39,7 @@ The server plugin should inject these commands only for authorized loop child pr
 - Always pass `--dir <project-root>` to child runs.
 - Plan/build child runs use `--dangerously-skip-permissions`.
 - Docker mode is enabled by default; host plan/build commands launch one Docker container and the full loop runs inside it unless `--no-docker` or `docker.enabled: false` is used.
-- Omitted `docker.image` defaults to `ghcr.io/john-ezra/openralph:<installed-package-version>` for Plan/Build runtime execution.
+- Omitted `docker.image` defaults to `ghcr.io/john-ezra/open-ralph:<installed-package-version>` for Plan/Build runtime execution.
 - `openralph docker build` defaults to the local build tag `openralph:local`.
 - Docker mode runs the container `openralph plan` or `openralph build` CLI entrypoint, never public prompt command replay.
 - Missing default prebuilt images are explicitly pulled before image inspect/version validation; custom configured images are not pulled automatically.
