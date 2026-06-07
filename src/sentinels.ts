@@ -6,7 +6,7 @@ export const BUILD_BLOCKED = "RALPH_BLOCKED"
 export type BuildSentinel = "complete" | "iteration-complete" | "blocked" | "none"
 
 export function isPlanComplete(output: string): boolean {
-  return output.includes(PLAN_COMPLETE)
+  return output.split(/\r?\n/).some((line) => line.trim() === PLAN_COMPLETE)
 }
 
 export function detectBuildSentinel(output: string): BuildSentinel {

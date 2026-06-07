@@ -6,6 +6,12 @@ The format is based on Keep a Changelog, and this project uses semantic versioni
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-06-06
+
+### Fixed
+
+- Required `RALPH_PLAN_COMPLETE` to appear as a standalone line before Plan treats it as a completion sentinel.
+
 ## [0.3.3] - 2026-06-06
 
 ### Fixed

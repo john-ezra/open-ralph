@@ -6,6 +6,18 @@ describe("sentinel detection", () => {
     expect(isPlanComplete("done\nRALPH_PLAN_COMPLETE\n")).toBe(true)
   })
 
+  test("detects plan completion with surrounding whitespace", () => {
+    expect(isPlanComplete("done\n  RALPH_PLAN_COMPLETE  \n")).toBe(true)
+  })
+
+  test("ignores embedded plan sentinel text", () => {
+    expect(isPlanComplete("I will not print the RALPH_PLAN_COMPLETE sentinel.")).toBe(false)
+  })
+
+  test("ignores partial plan sentinel lines", () => {
+    expect(isPlanComplete("RALPH_PLAN_COMPLETE: done")).toBe(false)
+  })
+
   test("detects standalone build complete", () => {
     expect(detectBuildSentinel("RALPH_BLOCKED\nRALPH_COMPLETE\n")).toBe("complete")
   })
