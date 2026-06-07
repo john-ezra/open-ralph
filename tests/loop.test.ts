@@ -42,16 +42,16 @@ describe("runLoop heartbeat", () => {
 })
 
 describe("runLoop plan completion", () => {
-  test("commits implementation plan changes when planning completes", async () => {
+  test("requires a fresh review after implementation plan changes", async () => {
     await withFakeOpenCode("plan-update", async (root) => {
       await runGit(root, ["rm", "IMPLEMENTATION_PLAN.md"])
       await runGit(root, ["commit", "-m", "Remove implementation plan"])
 
-      const summary = await runPlan(root)
+      const summary = await runPlan(root, "2")
 
       expect(summary.status).toBe("complete")
       expect(summary.message).toBe("planning complete; committed IMPLEMENTATION_PLAN.md")
-      expect(summary.launched).toBe(1)
+      expect(summary.launched).toBe(2)
 
       const head = await runGit(root, ["log", "--oneline", "-1"])
       expect(head.stdout).toContain("Update implementation plan")
@@ -63,13 +63,31 @@ describe("runLoop plan completion", () => {
       expect(status.stdout.trim()).toBe("")
 
       const log = await readFile(join(summary.artifacts, "ralph.log"), "utf8")
+      expect(log).toContain("status: planning continues; plan changed during iteration")
+      expect(log).toContain("sentinel: RALPH_PLAN_COMPLETE")
       expect(log).toContain("message: planning complete; committed IMPLEMENTATION_PLAN.md")
+    })
+  })
+
+  test("completes stable existing plans in one iteration", async () => {
+    await withFakeOpenCode("plan-stable", async (root) => {
+      const summary = await runPlan(root)
+
+      expect(summary.status).toBe("complete")
+      expect(summary.message).toBe("planning complete")
+      expect(summary.launched).toBe(1)
+
+      const head = await runGit(root, ["log", "--oneline", "-1"])
+      expect(head.stdout).toContain("Initial commit")
+
+      const status = await runGit(root, ["status", "--porcelain"])
+      expect(status.stdout.trim()).toBe("")
     })
   })
 
   test("commits only the implementation plan and warns when other dirty files remain", async () => {
     await withFakeOpenCode("plan-update-with-dirty", async (root) => {
-      const summary = await runPlan(root)
+      const summary = await runPlan(root, "2")
 
       expect(summary.status).toBe("complete")
       expect(summary.message).toBe("planning complete; committed IMPLEMENTATION_PLAN.md")
@@ -238,19 +256,40 @@ async function writeFakeOpenCode(path: string): Promise<void> {
     `#!/usr/bin/env bash
 set -euo pipefail
 
+next_iteration() {
+  local count_file="runs/openralph-test-\${OPENRALPH_TEST_SCENARIO:-unknown}.count"
+  local count=0
+  mkdir -p runs
+  if [ -f "$count_file" ]; then
+    read -r count < "$count_file"
+  fi
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$count_file"
+  printf '%s\n' "$count"
+}
+
 case "\${OPENRALPH_TEST_SCENARIO:-}" in
   plan-delayed-output)
     sleep 0.2
     printf 'delayed plan output\n'
     printf 'RALPH_PLAN_COMPLETE\n'
     ;;
+  plan-stable)
+    printf 'RALPH_PLAN_COMPLETE\n'
+    ;;
   plan-update)
-    printf -- '- [ ] Planned from specs\n' > IMPLEMENTATION_PLAN.md
+    count=$(next_iteration)
+    if [ "$count" -eq 1 ]; then
+      printf -- '- [ ] Planned from specs\n' > IMPLEMENTATION_PLAN.md
+    fi
     printf 'RALPH_PLAN_COMPLETE\n'
     ;;
   plan-update-with-dirty)
-    printf -- '- [ ] Planned from specs\n' > IMPLEMENTATION_PLAN.md
-    printf 'scratch\n' > scratch.txt
+    count=$(next_iteration)
+    if [ "$count" -eq 1 ]; then
+      printf -- '- [ ] Planned from specs\n' > IMPLEMENTATION_PLAN.md
+      printf 'scratch\n' > scratch.txt
+    fi
     printf 'RALPH_PLAN_COMPLETE\n'
     ;;
   complete-clean)

@@ -22,7 +22,9 @@
 
 Treat `IMPLEMENTATION_PLAN.md` as the canonical prioritized checklist. Keep remaining actionable work sorted from highest to lowest value. Prefer tasks small enough for one build iteration when practical. If a task would require broad refactoring, unclear sequencing, or repeated retries, split it into smaller independently validatable tasks. Remove or clearly mark completed work. Remove stale, duplicated, or contradicted tasks. Blocked items must include the blocker and what would unblock them. Add discovered bugs, audit findings, validation gaps, and follow-up work in the correct priority position. Do not record progress in `AGENTS.md`.
 
-When the specs, current code, and `IMPLEMENTATION_PLAN.md` have converged into a stable prioritized task list, print exactly:
+If this iteration creates or changes `IMPLEMENTATION_PLAN.md`, exit normally without printing a completion sentinel. The next fresh planning run must review the updated plan before completion can be accepted.
+
+When the specs, current code, and existing `IMPLEMENTATION_PLAN.md` have already converged into a stable prioritized task list without needing plan changes in this iteration, print exactly:
 
 RALPH_PLAN_COMPLETE
 

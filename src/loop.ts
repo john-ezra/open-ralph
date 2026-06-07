@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises"
+import { join } from "node:path"
 import { parseLoopArgs, resolveModel, type LoopPhase, type OpenRalphOptions } from "./args.ts"
 import { createRunArtifacts, finishRunArtifacts, startIterationArtifacts } from "./artifacts.ts"
 import { startCommand, type CommandOutputEvent, type CommandResult } from "./exec.ts"
@@ -160,6 +162,7 @@ export async function runLoop(input: RunLoopInput): Promise<LoopSummary> {
 
       const beforeHead = input.phase === "build" ? await getHead(git.root) : undefined
       const beforeGitInfoExclude = input.phase === "build" ? await readGitInfoExclude(git.root) : undefined
+      const beforeImplementationPlan = input.phase === "plan" ? await readImplementationPlanSnapshot(git.root) : undefined
       const childArgs = buildChildArgs(input.phase, git.root, model)
       state.launched += 1
       const iterationArtifacts = await startIterationArtifacts(artifacts, state.launched, childArgs)
@@ -240,10 +243,13 @@ export async function runLoop(input: RunLoopInput): Promise<LoopSummary> {
 
       if (input.phase === "plan") {
         const planComplete = isPlanComplete(output)
-        await iterationArtifacts.finish({ result, status: planComplete ? "planning complete" : "planning continues", sentinel: planComplete ? "RALPH_PLAN_COMPLETE" : undefined })
+        const planChanged = beforeImplementationPlan !== (await readImplementationPlanSnapshot(git.root))
+        const acceptsCompletion = planComplete && !planChanged
+        const status = planComplete && planChanged ? "planning continues; plan changed during iteration" : planComplete ? "planning complete" : "planning continues"
+        await iterationArtifacts.finish({ result, status, sentinel: planComplete ? "RALPH_PLAN_COMPLETE" : undefined })
         state.consecutiveFailures = 0
         state.lastFailure = undefined
-        if (planComplete) {
+        if (acceptsCompletion) {
           let planCommitted = false
           try {
             planCommitted = await commitImplementationPlanIfChanged(git.root)
@@ -318,6 +324,15 @@ export async function runLoop(input: RunLoopInput): Promise<LoopSummary> {
     process.off("SIGINT", onSigint)
     input.signal?.removeEventListener("abort", onAbort)
     await loopChild.cleanup()
+  }
+}
+
+async function readImplementationPlanSnapshot(projectRoot: string): Promise<string | undefined> {
+  try {
+    return await readFile(join(projectRoot, IMPLEMENTATION_PLAN_PATH), "utf8")
+  } catch (error) {
+    if (isNotFound(error)) return undefined
+    throw error
   }
 }
 
@@ -521,4 +536,8 @@ export function formatSummary(summary: LoopSummary): string {
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function isNotFound(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "ENOENT"
 }

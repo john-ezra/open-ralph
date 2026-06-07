@@ -6,6 +6,12 @@ The format is based on Keep a Changelog, and this project uses semantic versioni
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-06-06
+
+### Fixed
+
+- Required a fresh planning iteration to review `IMPLEMENTATION_PLAN.md` changes before accepting `RALPH_PLAN_COMPLETE`.
+
 ## [0.3.2] - 2026-06-06
 
 ### Changed
