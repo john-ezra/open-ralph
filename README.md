@@ -79,6 +79,8 @@ Manual config is only needed when bypassing opencode's plugin installer or editi
 - TUI config: `tui.json` with schema `https://opencode.ai/tui.json`.
 - Supported options: `defineModel`, `planModel`, `buildModel`, `docker.enabled`, `docker.image`, and `docker.maskEnv`.
 
+Option sources are resolved per run: `OPENRALPH_OPTIONS_JSON` (when set) is the complete configuration; otherwise options passed by the TUI plugin (`tui.json`) win per key over the project `opencode.json` plugin entry, which fills in the rest. `defineModel` for Design is read from the TUI plugin options only.
+
 Model precedence is:
 
 ```text
@@ -141,7 +143,7 @@ The default image supports `linux/amd64` and `linux/arm64`. It includes opencode
 
 OpenRalph Plan and Build child iterations run `opencode run --dangerously-skip-permissions`. Treat agent actions as untrusted.
 
-Docker mode reduces host filesystem exposure, but it is not a formal sandbox. The container can read and write the mounted repository, including `.git`; can read the mounted OpenCode auth file; and has unrestricted network egress. Docker mode masks files whose basename starts with `.env`, except `.env.example`, `.env.sample`, `.env.template`, and `.env.dist`. It does not mask other in-repo secrets such as `.npmrc`, private keys, cloud credentials, or service-account JSON.
+Docker mode reduces host filesystem exposure, but it is not a formal sandbox. The container can read and write the mounted repository, including `.git`; can read the mounted OpenCode auth file; and has unrestricted network egress. Docker mode masks files whose basename starts with `.env` (case-insensitive), except `.env.example`, `.env.sample`, `.env.template`, and `.env.dist`. Symlinked `.env*` files are masked by masking their resolved target when it lives inside the repository; targets outside the repository are not mounted into the container. The scan skips `.git` and `node_modules` and does not follow directory symlinks. It does not mask other in-repo secrets such as `.npmrc`, private keys, cloud credentials, or service-account JSON.
 
 Host mode runs child iterations directly on your machine with inherited environment variables, host filesystem access, and unrestricted network access. Use it only when you intentionally want that behavior.
 

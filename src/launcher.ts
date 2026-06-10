@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises"
+import { join } from "node:path"
 import { formatLoopArgsForReplay, parseLoopArgs, resolveDockerOptions, validateOptions, type LoopPhase, type OpenRalphOptions, type ParsedLoopArgs } from "./args.ts"
 import {
   CONTAINER_WORKSPACE,
@@ -55,7 +57,15 @@ export interface ResolveLauncherModeInput {
 
 export async function runOpenRalphLauncher(input: RunLauncherInput, deps: RunLauncherDeps = {}): Promise<LauncherResult> {
   const parsed = parseLoopArgs(input.phase, input.rawArgs)
-  const mode = await resolveLauncherMode({ parsed, options: input.options, env: deps.env, trust: deps.trust })
+  const env = deps.env ?? process.env
+  // OPENRALPH_OPTIONS_JSON is the complete intended config when set (CLI and
+  // container runs); otherwise fall back to the project's opencode.json plugin
+  // entry so server-side options are honored, with caller options winning per key.
+  const projectOptions = env.OPENRALPH_OPTIONS_JSON
+    ? {}
+    : await readProjectPluginOptions(input.cwd, (warning) => emitLauncherStatus(input, `${warning}\n`))
+  const options = mergeOptions(projectOptions, input.options)
+  const mode = await resolveLauncherMode({ parsed, options, env: deps.env, trust: deps.trust })
 
   if (mode === "docker-host-launch") {
     if (input.phase === "build" && parsed.push) {
@@ -74,8 +84,8 @@ export async function runOpenRalphLauncher(input: RunLauncherInput, deps: RunLau
     }
 
     const expectedVersion = (deps.readPackageVersion ?? defaultReadPackageVersion)()
-    const docker = resolveRuntimeDockerOptions(input.options, expectedVersion)
-    const isDefaultImage = input.options.docker?.image === undefined
+    const docker = resolveRuntimeDockerOptions(options, expectedVersion)
+    const isDefaultImage = options.docker?.image === undefined
     const inspectDockerImage = deps.inspectDockerImage ?? defaultInspectDockerImage
     emitLauncherStatus(input, `OpenRalph checking Docker image ${docker.image}.\n`)
     let imageStatus = await inspectDockerImage(docker.image, input.cwd)
@@ -125,7 +135,7 @@ export async function runOpenRalphLauncher(input: RunLauncherInput, deps: RunLau
       phase: input.phase,
       rawArgs: input.rawArgs,
       projectRoot: git.root,
-      options: input.options,
+      options,
       docker,
       streamOutput: input.streamOutput,
       captureOutput: input.captureOutput,
@@ -133,22 +143,30 @@ export async function runOpenRalphLauncher(input: RunLauncherInput, deps: RunLau
       signal: input.signal,
     })
 
-    if (result.exitCode !== 0) {
+    // The inner loop's status line is parsed from stdout only; stderr carries
+    // heartbeat lines that share the "OpenRalph <phase> " prefix.
+    const inner = extractOpenRalphSummary(input.phase, result.stdout)
+    const innerSummary = translateContainerPaths(inner?.summary, git.root)
+
+    if (inner?.status === "failed") {
+      throw new Error(formatDockerInnerFailure(input.phase, innerSummary ?? inner.summary))
+    }
+
+    const userStopped = result.stopRequested === true || input.signal?.aborted === true
+    if (result.exitCode !== 0 && !(userStopped || inner?.status === "stopped" || inner?.status === "blocked")) {
       throw new Error(formatDockerFailure(input.phase, parsed, result))
     }
 
-    const output = commandOutput(result)
-    const displayOutput = translateContainerPaths(output, git.root) ?? ""
-    const innerSummary = translateContainerPaths(extractOpenRalphSummary(input.phase, output), git.root)
-    if (innerSummary?.startsWith(`OpenRalph ${input.phase} failed:`)) {
-      throw new Error(formatDockerInnerFailure(input.phase, innerSummary))
-    }
-
+    const displayOutput = translateContainerPaths(commandOutput(result), git.root) ?? ""
+    const status = inner?.status ?? (userStopped ? "stopped" : "complete")
     return {
       phase: input.phase,
       mode,
-      status: "complete",
-      summary: formatDockerSuccess(input.phase, result, git.root),
+      status,
+      summary:
+        status === "stopped" && !innerSummary
+          ? `OpenRalph ${input.phase} Docker execution stopped by user.`
+          : formatDockerSuccess(input.phase, result, git.root),
       outputTail: displayOutput ? tailLines(displayOutput, 80) : undefined,
     }
   }
@@ -157,7 +175,7 @@ export async function runOpenRalphLauncher(input: RunLauncherInput, deps: RunLau
     phase: input.phase,
     rawArgs: input.rawArgs,
     cwd: input.cwd,
-    options: input.options,
+    options,
     executionMode: mode,
     streamOutput: input.streamOutput,
     onOutput: input.onOutput,
@@ -188,6 +206,72 @@ export async function resolveLauncherMode(input: ResolveLauncherModeInput): Prom
   return "host-config-default"
 }
 
+export async function readProjectPluginOptions(cwd: string, onWarning?: (message: string) => void): Promise<OpenRalphOptions> {
+  let raw: string
+  try {
+    raw = await readFile(join(cwd, "opencode.json"), "utf8")
+  } catch {
+    return {}
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    onWarning?.("OpenRalph could not parse opencode.json; ignoring its OpenRalph plugin options.")
+    return {}
+  }
+
+  if (typeof parsed !== "object" || parsed === null) return {}
+  const plugin = (parsed as { plugin?: unknown }).plugin
+  if (!Array.isArray(plugin)) return {}
+
+  for (const entry of plugin) {
+    let name: unknown
+    let pluginOptions: unknown
+    if (typeof entry === "string") {
+      name = entry
+    } else if (Array.isArray(entry) && entry.length >= 1) {
+      name = entry[0]
+      pluginOptions = entry[1]
+    } else {
+      continue
+    }
+
+    if (typeof name !== "string" || !isOpenRalphPluginSpec(name)) continue
+    if (pluginOptions === undefined) return {}
+    try {
+      return validateOptions(pluginOptions)
+    } catch (error) {
+      throw new Error(`opencode.json OpenRalph plugin options are invalid: ${formatError(error)}`)
+    }
+  }
+
+  return {}
+}
+
+function isOpenRalphPluginSpec(name: string): boolean {
+  return name.includes("open-ralph") || /(^|\/)plugin\.ts$/.test(name)
+}
+
+function mergeOptions(base: OpenRalphOptions, override: OpenRalphOptions): OpenRalphOptions {
+  const merged: OpenRalphOptions = { ...base }
+  if (override.defineModel !== undefined) merged.defineModel = override.defineModel
+  if (override.planModel !== undefined) merged.planModel = override.planModel
+  if (override.buildModel !== undefined) merged.buildModel = override.buildModel
+
+  if (base.docker || override.docker) {
+    merged.docker = {
+      ...(base.docker ?? {}),
+      ...(override.docker?.enabled !== undefined ? { enabled: override.docker.enabled } : {}),
+      ...(override.docker?.image !== undefined ? { image: override.docker.image } : {}),
+      ...(override.docker?.maskEnv !== undefined ? { maskEnv: override.docker.maskEnv } : {}),
+    }
+  }
+
+  return merged
+}
+
 export function readOptionsFromEnv(env: NodeJS.ProcessEnv = process.env): OpenRalphOptions {
   const raw = env.OPENRALPH_OPTIONS_JSON
   if (!raw) return {}
@@ -203,14 +287,14 @@ export function readOptionsFromEnv(env: NodeJS.ProcessEnv = process.env): OpenRa
 }
 
 export function formatDockerSuccess(phase: LoopPhase, result: CommandResult, projectRoot?: string): string {
-  const output = translateContainerPaths(commandOutput(result), projectRoot) ?? ""
-  const summary = extractOpenRalphSummary(phase, output)
+  const summary = translateContainerPaths(extractOpenRalphSummary(phase, result.stdout)?.summary, projectRoot)
   const lines = [`OpenRalph ${phase} Docker execution completed.`]
 
   if (summary) {
     lines.push("", summary)
-  } else if (output) {
-    lines.push("", "Container output tail:", tailLines(output, 80))
+  } else {
+    const output = translateContainerPaths(commandOutput(result), projectRoot) ?? ""
+    if (output) lines.push("", "Container output tail:", tailLines(output, 80))
   }
 
   return lines.join("\n")
@@ -375,11 +459,23 @@ function translateContainerPaths(value: string | undefined, projectRoot: string 
   return value.split(`${CONTAINER_WORKSPACE}/runs/`).join(`${projectRoot}/runs/`)
 }
 
-function extractOpenRalphSummary(phase: LoopPhase, output: string): string | undefined {
+interface ExtractedSummary {
+  status: LoopSummary["status"]
+  summary: string
+}
+
+function extractOpenRalphSummary(phase: LoopPhase, output: string): ExtractedSummary | undefined {
+  // Anchor on the exact loop status line so heartbeat/diagnostic lines that
+  // share the "OpenRalph <phase> " prefix can never be mistaken for a summary.
+  const statusPattern = new RegExp(`^OpenRalph ${phase} (complete|max-reached|failed|stopped|blocked): `)
   const lines = output.split(/\r?\n/)
   for (let index = lines.length - 1; index >= 0; index -= 1) {
-    if (lines[index].startsWith(`OpenRalph ${phase} `)) {
-      return lines.slice(index, Math.min(lines.length, index + 8)).join("\n").trim()
+    const match = lines[index].match(statusPattern)
+    if (match) {
+      return {
+        status: match[1] as LoopSummary["status"],
+        summary: lines.slice(index, Math.min(lines.length, index + 8)).join("\n").trim(),
+      }
     }
   }
   return undefined

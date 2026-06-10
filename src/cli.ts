@@ -37,7 +37,7 @@ export async function runCli(argv = process.argv.slice(2), deps: CliDeps = {}): 
     }
     const result = await (deps.runLauncher ?? runOpenRalphLauncher)(input, { env: deps.env })
     stdout.write(`${result.summary}\n`)
-    return result.status === "failed" ? 1 : 0
+    return result.status === "failed" || result.status === "blocked" ? 1 : 0
   } catch (error) {
     stderr.write(`OpenRalph failed: ${formatError(error)}\n`)
     return 1

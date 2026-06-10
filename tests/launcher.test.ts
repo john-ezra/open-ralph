@@ -410,6 +410,108 @@ describe("runOpenRalphLauncher", () => {
     expect(hostCalled).toBe(false)
   })
 
+  test("ignores stderr heartbeat lines and propagates the inner loop status", async () => {
+    const result = await runOpenRalphLauncher(
+      { phase: "build", rawArgs: "1", cwd: "/repo", options: { docker: { enabled: true } } },
+      {
+        env: {},
+        trust: noContainer,
+        commandExists: allCommandsExist,
+        inspectDockerImage: currentImage,
+        readPackageVersion: readCurrentVersion,
+        requireGitContext: async () => ({ root: "/repo", branch: "feature/test" }),
+        readWorktreeStatus: async () => [],
+        runDockerLoop: async () => ({
+          exitCode: 0,
+          signal: null,
+          stdout: "OpenRalph build max-reached: reached max iterations (1)\nlaunched iterations: 1\n",
+          stderr: [
+            "OpenRalph build iter-001 started. Waiting for opencode output...",
+            "OpenRalph build iter-001 still running after 1m 0s (45s since last output).",
+            "",
+          ].join("\n"),
+        }),
+      },
+    )
+
+    expect(result.status).toBe("max-reached")
+    expect(result.summary).toContain("OpenRalph build max-reached: reached max iterations (1)")
+    expect(result.summary).not.toContain("still running")
+    expect(result.summary).not.toContain("Waiting for opencode output")
+  })
+
+  test("does not let stderr heartbeat lines spoof an inner failure", async () => {
+    const result = await runOpenRalphLauncher(
+      { phase: "plan", rawArgs: "1", cwd: "/repo", options: { docker: { enabled: true } } },
+      {
+        env: {},
+        trust: noContainer,
+        commandExists: allCommandsExist,
+        inspectDockerImage: currentImage,
+        readPackageVersion: readCurrentVersion,
+        requireGitContext: async () => ({ root: "/repo", branch: "feature/test" }),
+        runDockerLoop: async () => ({
+          exitCode: 0,
+          signal: null,
+          stdout: "OpenRalph plan complete: planning complete\n",
+          stderr: "OpenRalph plan iteration failed: transient child retry\n",
+        }),
+      },
+    )
+
+    expect(result.status).toBe("complete")
+    expect(result.summary).toContain("OpenRalph plan complete: planning complete")
+  })
+
+  test("treats a user-stopped Docker run as stopped instead of failed", async () => {
+    const result = await runOpenRalphLauncher(
+      { phase: "build", rawArgs: "1", cwd: "/repo", options: { docker: { enabled: true } } },
+      {
+        env: {},
+        trust: noContainer,
+        commandExists: allCommandsExist,
+        inspectDockerImage: currentImage,
+        readPackageVersion: readCurrentVersion,
+        requireGitContext: async () => ({ root: "/repo", branch: "feature/test" }),
+        readWorktreeStatus: async () => [],
+        runDockerLoop: async () => ({
+          exitCode: 130,
+          signal: null,
+          stdout: "",
+          stderr: "",
+          stopRequested: true,
+        }),
+      },
+    )
+
+    expect(result.status).toBe("stopped")
+    expect(result.summary).toContain("stopped by user")
+  })
+
+  test("surfaces blocked Docker runs without a generic Docker failure", async () => {
+    const result = await runOpenRalphLauncher(
+      { phase: "build", rawArgs: "1", cwd: "/repo", options: { docker: { enabled: true } } },
+      {
+        env: {},
+        trust: noContainer,
+        commandExists: allCommandsExist,
+        inspectDockerImage: currentImage,
+        readPackageVersion: readCurrentVersion,
+        requireGitContext: async () => ({ root: "/repo", branch: "feature/test" }),
+        readWorktreeStatus: async () => [],
+        runDockerLoop: async () => ({
+          exitCode: 1,
+          signal: null,
+          stdout: "OpenRalph build blocked: stopped after 3 consecutive blocked iterations without new commits; resolve the blocker documented in IMPLEMENTATION_PLAN.md and rerun\n",
+          stderr: "",
+        }),
+      },
+    )
+
+    expect(result.status).toBe("blocked")
+    expect(result.summary).toContain("OpenRalph build blocked:")
+  })
+
   test("reports inner Ralph loop failure from Docker output", async () => {
     await expect(
       runOpenRalphLauncher(

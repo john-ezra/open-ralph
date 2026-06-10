@@ -128,7 +128,7 @@ Rationale:
 - Docker mode reduces host filesystem blast radius but is not a formal sandbox guarantee.
 - TUI Design mode remains host-side so host memory/MCP integrations can participate in ideation.
 - TUI Design mode is host-side and injects a Ralph Design prompt into the current session after an optional initial idea prompt.
-- Docker mode mounts the repo read/write at `/workspace`, mounts OpenCode auth read-only, masks real `.env*` files by default, and does not mount host home, SSH, config, desktop sockets, or the Docker socket.
+- Docker mode mounts the repo read/write at `/workspace`, mounts OpenCode auth read-only, masks real `.env*` files by default (case-insensitive, including symlinks resolving inside the repo; the scan skips `.git` and `node_modules`), and does not mount host home, SSH, config, desktop sockets, or the Docker socket.
 - Docker mode does not mount host Git config, SSH keys, GPG material, browser profiles, browser cookies, or desktop sockets.
 - Dockerized OpenRalph Plan and Build require host/project Git `user.name` and `user.email`; OpenRalph passes them through author/committer environment variables, disables commit/tag signing inside Docker, and marks `/workspace` as a safe Git directory.
 - The default prebuilt/local image includes Bun, Node 22, npm/npx/corepack, Git, Bash, curl, Python 3, native build tools, ripgrep, Google Chrome stable, screenshot-friendly fonts, `opencode-ai@1.15.13`, and `chrome-devtools-mcp@1.1.1`.

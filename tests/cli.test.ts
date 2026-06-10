@@ -52,6 +52,29 @@ describe("runCli", () => {
     expect(exitCode).toBe(1)
   })
 
+  test("returns non-zero for blocked launcher summaries", async () => {
+    const exitCode = await runCli(["build", "1"], {
+      stdout: { write: () => true },
+      runLauncher: async () => ({
+        phase: "build",
+        mode: "host-config-default",
+        status: "blocked",
+        summary: "OpenRalph build blocked: resolve the blocker documented in IMPLEMENTATION_PLAN.md",
+      }),
+    })
+
+    expect(exitCode).toBe(1)
+  })
+
+  test("returns zero for stopped launcher summaries", async () => {
+    const exitCode = await runCli(["build", "1"], {
+      stdout: { write: () => true },
+      runLauncher: async () => ({ phase: "build", mode: "docker-host-launch", status: "stopped", summary: "OpenRalph build stopped: stopped by user" }),
+    })
+
+    expect(exitCode).toBe(0)
+  })
+
   test("builds the Docker image with documented flags", async () => {
     let stdout = ""
     const exitCode = await runCli(["docker", "build", "--tag", "openralph:test", "--no-cache"], {

@@ -1,7 +1,9 @@
-import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import { existsSync } from "node:fs"
+import { chmod, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { delimiter, join } from "node:path"
 import { describe, expect, test } from "bun:test"
+import { runCommand } from "../src/exec.ts"
 import {
   buildContainerConfig,
   buildDockerArgs,
@@ -15,6 +17,7 @@ import {
   OPENRALPH_IMAGE_VERSION_LABEL,
   pullDockerImage,
   resolveRuntimeDockerOptions,
+  runDockerLoop,
   shouldMaskEnvFile,
 } from "../src/docker.ts"
 
@@ -71,9 +74,12 @@ describe("buildDockerArgs", () => {
       gid: 1000,
       gitIdentity: { name: "Ezra Example", email: "ezra@example.com" },
       dockerToken: { token: "docker-token", file: "/tmp/docker-token" },
+      containerName: "openralph-build-abc123def456",
     })
 
     expect(args[0]).toBe("run")
+    expect(args).toContain("--name")
+    expect(args).toContain("openralph-build-abc123def456")
     expect(args).toContain("--pull=never")
     expect(args).toContain("--shm-size=1g")
     expect(args).toContain("OPENRALPH_IN_DOCKER=1")
@@ -286,33 +292,216 @@ exit 2
   })
 })
 
+describe("runDockerLoop", () => {
+  test("runs the container with masks and token, then cleans up temp files", async () => {
+    await withFakeDockerRepo(
+      `if [ "$1" = "run" ]; then
+  printf '%s\\n' "$@" > "\${OPENRALPH_TEST_DOCKER_ARGS}"
+  printf 'OpenRalph build complete: build complete\\n'
+  exit 0
+fi
+exit 2
+`,
+      async ({ repo, authPath, argsFile }) => {
+        const result = await runDockerLoop({
+          phase: "build",
+          rawArgs: "1",
+          projectRoot: repo,
+          options: {},
+          docker: { enabled: true, image: "openralph:test", maskEnv: true },
+          streamOutput: false,
+          captureOutput: true,
+          authPath,
+        })
+
+        expect(result.exitCode).toBe(0)
+        expect(result.stopRequested).toBe(false)
+        expect(result.stdout).toContain("OpenRalph build complete: build complete")
+
+        const args = await readFile(argsFile, "utf8")
+        expect(args).toContain("--name")
+        expect(args).toContain("OPENRALPH_IN_DOCKER=1")
+        expect(args).toContain("target=/workspace/.env,readonly")
+
+        const mountSource = (target: string) =>
+          args
+            .split("\n")
+            .find((line) => line.includes(`target=${target}`))
+            ?.match(/source=([^,]+),/)?.[1]
+
+        const tokenSource = mountSource("/run/openralph/docker-token")
+        const maskSource = mountSource("/workspace/.env")
+        expect(tokenSource).toBeDefined()
+        expect(maskSource).toBeDefined()
+        expect(existsSync(tokenSource as string)).toBe(false)
+        expect(existsSync(maskSource as string)).toBe(false)
+      },
+    )
+  })
+
+  test("flags user stops via the abort signal instead of throwing", async () => {
+    await withFakeDockerRepo(
+      `if [ "$1" = "run" ]; then
+  sleep 3
+  exit 0
+fi
+exit 2
+`,
+      async ({ repo, authPath }) => {
+        const controller = new AbortController()
+        controller.abort()
+
+        const result = await runDockerLoop({
+          phase: "plan",
+          rawArgs: "1",
+          projectRoot: repo,
+          options: {},
+          docker: { enabled: true, image: "openralph:test", maskEnv: false },
+          streamOutput: false,
+          captureOutput: true,
+          signal: controller.signal,
+          authPath,
+        })
+
+        expect(result.stopRequested).toBe(true)
+      },
+    )
+  })
+
+  test("requires git identity before launching the container", async () => {
+    await withFakeDockerRepo(
+      `exit 2
+`,
+      async ({ repo, authPath }) => {
+        await runCommand("git", ["config", "--unset", "user.name"], repo)
+        await runCommand("git", ["config", "--unset", "user.email"], repo)
+
+        await expect(
+          runDockerLoop({
+            phase: "build",
+            rawArgs: "1",
+            projectRoot: repo,
+            options: {},
+            docker: { enabled: true, image: "openralph:test", maskEnv: false },
+            streamOutput: false,
+            captureOutput: true,
+            authPath,
+          }),
+        ).rejects.toThrow("require Git user.name and user.email")
+      },
+    )
+  })
+})
+
+async function withFakeDockerRepo(
+  dockerScriptBody: string,
+  run: (context: { repo: string; authPath: string; argsFile: string }) => Promise<void>,
+): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), "openralph-dockerloop-test-"))
+  const originalPath = process.env.PATH
+  const originalArgsFile = process.env.OPENRALPH_TEST_DOCKER_ARGS
+  const originalGitGlobal = process.env.GIT_CONFIG_GLOBAL
+  const originalGitSystem = process.env.GIT_CONFIG_SYSTEM
+
+  try {
+    // Isolate git identity to the test repo so machine-level config cannot
+    // satisfy requireGitIdentity.
+    process.env.GIT_CONFIG_GLOBAL = "/dev/null"
+    process.env.GIT_CONFIG_SYSTEM = "/dev/null"
+    const bin = join(root, "bin")
+    await mkdir(bin)
+    const docker = join(bin, "docker")
+    await writeFile(docker, `#!/usr/bin/env bash\nset -euo pipefail\n\n${dockerScriptBody}`)
+    await chmod(docker, 0o755)
+
+    const repo = join(root, "repo")
+    await mkdir(repo)
+    await runCommand("git", ["init"], repo)
+    await runCommand("git", ["config", "user.name", "OpenRalph Test"], repo)
+    await runCommand("git", ["config", "user.email", "openralph@example.com"], repo)
+    await writeFile(join(repo, ".env"), "SECRET=1")
+
+    const authPath = join(root, "auth.json")
+    await writeFile(authPath, "{}")
+
+    const argsFile = join(root, "docker-args.txt")
+    process.env.OPENRALPH_TEST_DOCKER_ARGS = argsFile
+    process.env.PATH = `${bin}${delimiter}${originalPath ?? ""}`
+
+    await run({ repo, authPath, argsFile })
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH
+    else process.env.PATH = originalPath
+
+    if (originalArgsFile === undefined) delete process.env.OPENRALPH_TEST_DOCKER_ARGS
+    else process.env.OPENRALPH_TEST_DOCKER_ARGS = originalArgsFile
+
+    if (originalGitGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL
+    else process.env.GIT_CONFIG_GLOBAL = originalGitGlobal
+
+    if (originalGitSystem === undefined) delete process.env.GIT_CONFIG_SYSTEM
+    else process.env.GIT_CONFIG_SYSTEM = originalGitSystem
+
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
 describe("env masking", () => {
   test("classifies env files", () => {
     expect(shouldMaskEnvFile("/repo/.env")).toBe(true)
     expect(shouldMaskEnvFile("/repo/.env.local")).toBe(true)
+    expect(shouldMaskEnvFile("/repo/.ENV")).toBe(true)
+    expect(shouldMaskEnvFile("/repo/.Env.Local")).toBe(true)
     expect(shouldMaskEnvFile("/repo/.env.example")).toBe(false)
+    expect(shouldMaskEnvFile("/repo/.ENV.EXAMPLE")).toBe(false)
     expect(shouldMaskEnvFile("/repo/.env.sample")).toBe(false)
     expect(shouldMaskEnvFile("/repo/not-env")).toBe(false)
   })
 
-  test("detects maskable env files recursively", async () => {
+  test("detects maskable env files recursively, including build output dirs", async () => {
     const root = await mkdtemp(join(tmpdir(), "openralph-test-"))
     try {
+      const rootReal = await realpath(root)
       await mkdir(join(root, "nested"))
-      await mkdir(join(root, "runs"))
-      await mkdir(join(root, ".next"))
+      await mkdir(join(root, "dist"))
+      await mkdir(join(root, "node_modules"))
+      await mkdir(join(root, ".git"))
       await writeFile(join(root, ".env"), "SECRET=1")
       await writeFile(join(root, ".env.example"), "SECRET=")
+      await writeFile(join(root, ".ENV.LOCAL"), "SECRET=upper")
       await writeFile(join(root, "nested", ".env.production"), "SECRET=2")
-      await writeFile(join(root, "runs", ".env.local"), "SECRET=ignored")
-      await writeFile(join(root, ".next", ".env.local"), "SECRET=ignored")
+      await writeFile(join(root, "dist", ".env"), "SECRET=copied-by-build")
+      await writeFile(join(root, "node_modules", ".env"), "SECRET=skipped")
+      await writeFile(join(root, ".git", ".env"), "SECRET=skipped")
 
-      expect((await detectMaskableEnvFiles(root)).map((path) => containerPath(root, path))).toEqual([
+      expect((await detectMaskableEnvFiles(root)).map((path) => containerPath(rootReal, path))).toEqual([
+        "/workspace/.ENV.LOCAL",
         "/workspace/.env",
+        "/workspace/dist/.env",
         "/workspace/nested/.env.production",
       ])
     } finally {
       await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  test("masks the resolved target of in-repo .env symlinks and ignores outside targets", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openralph-test-"))
+    const outside = await mkdtemp(join(tmpdir(), "openralph-outside-"))
+    try {
+      const rootReal = await realpath(root)
+      await writeFile(join(root, "real-secrets.txt"), "SECRET=real")
+      await symlink(join(root, "real-secrets.txt"), join(root, ".env"))
+      await writeFile(join(outside, "outside-secrets.txt"), "SECRET=outside")
+      await symlink(join(outside, "outside-secrets.txt"), join(root, ".env.outside"))
+      await symlink(join(root, "missing-target.txt"), join(root, ".env.broken"))
+
+      expect((await detectMaskableEnvFiles(root)).map((path) => containerPath(rootReal, path))).toEqual([
+        "/workspace/real-secrets.txt",
+      ])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(outside, { recursive: true, force: true })
     }
   })
 })

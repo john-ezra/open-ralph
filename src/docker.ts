@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto"
 import { readFileSync } from "node:fs"
-import { access, mkdtemp, readdir, rm, writeFile } from "node:fs/promises"
+import { access, mkdtemp, readdir, realpath, rm, stat, writeFile } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
-import { basename, join, relative, sep } from "node:path"
+import { basename, isAbsolute, join, relative, sep } from "node:path"
 import {
   DEFAULT_LOCAL_DOCKER_IMAGE,
   defaultPublishedDockerImage,
@@ -14,7 +14,7 @@ import {
   type ParsedLoopArgs,
   type ResolvedDockerOptions,
 } from "./args.ts"
-import { startCommand, type CommandOutputEvent, type CommandResult } from "./exec.ts"
+import { runCommand, startCommand, type CommandOutputEvent, type CommandResult } from "./exec.ts"
 import { runGitCommand } from "./git.ts"
 import { DOCKER_TOKEN_PATH } from "./trust.ts"
 
@@ -33,21 +33,10 @@ export const CHROME_DEVTOOLS_MCP_COMMAND = [
 ] as const
 
 const ENV_EXAMPLE_FILES = new Set([".env.example", ".env.sample", ".env.template", ".env.dist"])
-const ENV_SCAN_SKIP_DIRS = new Set([
-  ".cache",
-  ".git",
-  ".next",
-  ".turbo",
-  ".venv",
-  "__pycache__",
-  "build",
-  "coverage",
-  "dist",
-  "node_modules",
-  "runs",
-  "target",
-  "venv",
-])
+// Only directories that cannot contain user secrets worth masking are skipped.
+// Build-output directories (dist, build, coverage, ...) stay in scope: pipelines
+// copy .env files into them and they are mounted read/write into the container.
+const ENV_SCAN_SKIP_DIRS = new Set([".git", "node_modules"])
 const DEFAULT_PULL_IDLE_STATUS_INTERVAL_MS = 30_000
 const DEFAULT_DOCKER_STARTUP_STATUS_INTERVAL_MS = 30_000
 const CONTAINER_GIT_CONFIG = [
@@ -67,6 +56,7 @@ export interface RunDockerLoopInput {
   onOutput?: (event: CommandOutputEvent) => void
   signal?: AbortSignal
   startupStatusIntervalMs?: number
+  authPath?: string
 }
 
 export interface BuildLocalDockerImageInput {
@@ -120,6 +110,7 @@ export interface BuildDockerArgsInput {
   gitIdentity?: GitIdentity
   imagePluginPath?: string
   dockerToken: DockerToken
+  containerName?: string
 }
 
 export interface GitIdentity {
@@ -137,10 +128,14 @@ export interface DockerToken {
   file: string
 }
 
-export async function runDockerLoop(input: RunDockerLoopInput): Promise<CommandResult> {
+export interface DockerLoopResult extends CommandResult {
+  stopRequested?: boolean
+}
+
+export async function runDockerLoop(input: RunDockerLoopInput): Promise<DockerLoopResult> {
   const parsed = parseLoopArgs(input.phase, input.rawArgs)
   const docker = input.docker ?? resolveRuntimeDockerOptions(input.options)
-  const authPath = defaultAuthPath()
+  const authPath = input.authPath ?? defaultAuthPath()
   let envMasks = emptyEnvMasks()
   let dockerToken: (DockerToken & { cleanup: () => Promise<void> }) | undefined
   let activeChild: ReturnType<typeof startCommand>["child"] | undefined
@@ -149,11 +144,23 @@ export async function runDockerLoop(input: RunDockerLoopInput): Promise<CommandR
   let setupStep = "checking OpenCode auth"
   let lastDockerOutputAt = Date.now()
   let stopRequested = false
+  let containerName: string | undefined
 
   const onSigint = () => {
-    stopRequested = true
-    activeChild?.kill("SIGINT")
-    process.stderr.write("\nOpenRalph Docker stop requested. Waiting for container to exit...\n")
+    if (!stopRequested) {
+      stopRequested = true
+      activeChild?.kill("SIGINT")
+      process.stderr.write("\nOpenRalph Docker stop requested. Waiting for container to exit...\n")
+      return
+    }
+
+    // Second Ctrl+C: the docker client only proxies signals, so kill the
+    // container by name before force-terminating the client.
+    process.stderr.write("\nOpenRalph Docker force stop requested. Killing the container...\n")
+    if (containerName) {
+      void runCommand("docker", ["kill", containerName], input.projectRoot).catch(() => {})
+    }
+    activeChild?.kill("SIGKILL")
   }
 
   const onAbort = () => {
@@ -188,6 +195,7 @@ export async function runDockerLoop(input: RunDockerLoopInput): Promise<CommandR
     setupStep = "creating Docker attestation token"
     emitDockerStatus(input, "OpenRalph creating Docker attestation token.\n")
     dockerToken = await prepareDockerToken()
+    containerName = `openralph-${input.phase}-${dockerToken.token.slice(0, 12)}`
 
     setupStep = "reading host user and Git identity"
     emitDockerStatus(input, "OpenRalph reading host user and Git identity for Docker.\n")
@@ -217,6 +225,7 @@ export async function runDockerLoop(input: RunDockerLoopInput): Promise<CommandR
         gid: user.gid,
         gitIdentity,
         dockerToken,
+        containerName,
       }),
       {
         cwd: input.projectRoot,
@@ -231,11 +240,9 @@ export async function runDockerLoop(input: RunDockerLoopInput): Promise<CommandR
     )
     activeChild = running.child
     const result = await running.result
-    if (stopRequested) throw new Error("Docker execution stopped by user")
-    return result
-  } catch (error) {
-    if (stopRequested) throw new Error(`Docker execution stopped: ${formatError(error)}`)
-    throw error
+    // A user-initiated stop is not a failure; the caller maps it to a clean
+    // "stopped" outcome instead of an error.
+    return { ...result, stopRequested }
   } finally {
     activeChild = undefined
     setupHeartbeat?.stop()
@@ -354,6 +361,8 @@ export function buildDockerArgs(input: BuildDockerArgsInput): string[] {
     "no-new-privileges:true",
   ]
 
+  if (input.containerName) args.push("--name", input.containerName)
+
   appendEnv(args, "OPENRALPH_IN_DOCKER", "1")
   appendEnv(args, "OPENRALPH_DOCKER_TOKEN", input.dockerToken.token)
   appendEnv(args, "OPENRALPH_OPTIONS_JSON", JSON.stringify(input.options))
@@ -430,22 +439,26 @@ export async function requireGitIdentity(cwd: string): Promise<GitIdentity> {
 }
 
 export async function detectMaskableEnvFiles(root: string): Promise<string[]> {
-  const files: string[] = []
-  await collectMaskableEnvFiles(root, files)
-  return files.sort()
+  const files = new Set<string>()
+  const rootReal = await realpath(root)
+  await collectMaskableEnvFiles(rootReal, rootReal, files)
+  return [...files].sort()
 }
 
 export async function prepareEnvMasks(root: string): Promise<PreparedEnvMasks> {
   const envFiles = await detectMaskableEnvFiles(root)
   if (envFiles.length === 0) return emptyEnvMasks()
 
+  // Detected paths are fully resolved, so container paths must be computed
+  // against the resolved root as well.
+  const rootReal = await realpath(root)
   const tempDir = await mkdtemp(join(tmpdir(), "openralph-env-"))
   const mounts: DockerMount[] = []
 
   for (let index = 0; index < envFiles.length; index += 1) {
     const source = join(tempDir, `env-${index}`)
     await writeFile(source, "")
-    mounts.push({ source, target: containerPath(root, envFiles[index]), readonly: true })
+    mounts.push({ source, target: containerPath(rootReal, envFiles[index]), readonly: true })
   }
 
   return {
@@ -455,7 +468,7 @@ export async function prepareEnvMasks(root: string): Promise<PreparedEnvMasks> {
 }
 
 export function shouldMaskEnvFile(path: string): boolean {
-  const name = basename(path)
+  const name = basename(path).toLowerCase()
   return name.startsWith(".env") && !ENV_EXAMPLE_FILES.has(name)
 }
 
@@ -578,17 +591,42 @@ async function requireReadableFile(path: string, label: string): Promise<void> {
   }
 }
 
-async function collectMaskableEnvFiles(dir: string, files: string[]): Promise<void> {
+async function collectMaskableEnvFiles(root: string, dir: string, files: Set<string>): Promise<void> {
   const entries = await readdir(dir, { withFileTypes: true })
 
   for (const entry of entries) {
     const path = join(dir, entry.name)
     if (entry.isDirectory()) {
-      if (!ENV_SCAN_SKIP_DIRS.has(entry.name)) await collectMaskableEnvFiles(path, files)
+      if (!ENV_SCAN_SKIP_DIRS.has(entry.name)) await collectMaskableEnvFiles(root, path, files)
       continue
     }
 
-    if (entry.isFile() && shouldMaskEnvFile(path)) files.push(path)
+    if (!shouldMaskEnvFile(path)) continue
+
+    if (entry.isFile()) {
+      files.add(path)
+      continue
+    }
+
+    // A symlinked .env cannot be masked at the link path (the bind mount would
+    // resolve through it), so mask the resolved target when it lives inside the
+    // repo. Targets outside the repo are not mounted, so nothing leaks.
+    if (entry.isSymbolicLink()) {
+      const resolved = await resolveRepoSymlinkTarget(root, path)
+      if (resolved) files.add(resolved)
+    }
+  }
+}
+
+async function resolveRepoSymlinkTarget(root: string, path: string): Promise<string | undefined> {
+  try {
+    const resolved = await realpath(path)
+    if (!(await stat(resolved)).isFile()) return undefined
+    const rel = relative(root, resolved)
+    if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return undefined
+    return resolved
+  } catch {
+    return undefined
   }
 }
 
@@ -609,6 +647,3 @@ function hostUser(): { uid?: number; gid?: number } {
   return { uid: process.getuid(), gid: process.getgid() }
 }
 
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
