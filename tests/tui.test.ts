@@ -540,6 +540,108 @@ describe("TUI plugin", () => {
     }
   })
 
+  test("toasts detached completions and reopens the last run from the menu", async () => {
+    let resolveLauncher: ((result: LauncherResult) => void) | undefined
+    launcherImplementation = async () =>
+      new Promise<LauncherResult>((resolve) => {
+        resolveLauncher = resolve
+      })
+
+    const disposers: Array<() => void> = []
+    const toasts: Array<{ variant?: string; title?: string; message: string; duration?: number }> = []
+    const dialogMessages: string[] = []
+    let registeredLayer: KeymapLayer | undefined
+    let promptProps: { onConfirm?: (value: string) => void } | undefined
+    let selectProps: DialogSelectProps | undefined
+    let currentDialogClose: (() => void) | undefined
+
+    const dialog = {
+      setSize: () => undefined,
+      replace: (render: () => unknown, onClose?: () => void) => {
+        currentDialogClose?.()
+        currentDialogClose = onClose
+        return render()
+      },
+      clear: () => {
+        const onClose = currentDialogClose
+        currentDialogClose = undefined
+        onClose?.()
+      },
+    }
+
+    try {
+      await tuiModule.tui(
+        {
+          keymap: {
+            intercept: () => () => undefined,
+            registerLayer: (layer: KeymapLayer) => {
+              registeredLayer = layer
+              return () => undefined
+            },
+          },
+          lifecycle: { onDispose: (fn: () => void) => (disposers.push(fn), () => undefined) },
+          state: { path: { directory: "/tmp/openralph-test", worktree: "/tmp/openralph-test" } },
+          ui: {
+            dialog,
+            DialogPrompt: (props: { onConfirm?: (value: string) => void }) => {
+              promptProps = props
+              return props
+            },
+            DialogSelect: (props: DialogSelectProps) => {
+              selectProps = props
+              return props
+            },
+            DialogAlert: (props: { message: string; onConfirm?: () => void }) => {
+              dialogMessages.push(props.message)
+              return props
+            },
+            DialogConfirm: (props: DialogConfirmProps) => {
+              dialogMessages.push(props.message)
+              return props
+            },
+            toast: (input: { variant?: string; title?: string; message: string; duration?: number }) => toasts.push(input),
+          },
+        } as never,
+        {},
+        {} as never,
+      )
+
+      const commands = registeredLayer?.commands ?? []
+      commands.find((command) => command.name === "openralph")?.run?.()
+      expect(selectProps?.options.map((option) => option.value)).toEqual(["design", "plan", "build"])
+      selectProps?.onSelect?.(selectProps.options[1])
+      promptProps?.onConfirm?.("1")
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      // User closes the viewer while the run is still going.
+      dialog.clear()
+      expect(toasts).toHaveLength(0)
+
+      resolveLauncher?.({
+        phase: "plan",
+        mode: "host-config-default",
+        status: "complete",
+        summary: "OpenRalph plan complete: detached summary",
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(toasts).toHaveLength(1)
+      expect(toasts[0]?.variant).toBe("success")
+      expect(toasts[0]?.message).toContain("plan complete")
+
+      commands.find((command) => command.name === "openralph")?.run?.()
+      expect(selectProps?.options.map((option) => option.value)).toEqual(["design", "plan", "build", "view"])
+      expect(selectProps?.options[3]?.title).toBe("View Last Run")
+
+      selectProps?.onSelect?.(selectProps.options[3])
+      expect(dialogMessages.at(-1)).toContain("Status: complete")
+      expect(dialogMessages.at(-1)).toContain("OpenRalph plan complete: detached summary")
+    } finally {
+      for (const dispose of disposers) dispose()
+      launcherImplementation = defaultLauncherImplementation
+    }
+  })
+
 })
 
 async function launchFromTui(input: {

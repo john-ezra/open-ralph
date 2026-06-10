@@ -24,7 +24,7 @@ interface TuiRunState {
   suppressDialogClose?: boolean
 }
 
-type RalphMode = "design" | "plan" | "build"
+type RalphMode = "design" | "plan" | "build" | "view"
 type RunLauncher = typeof runOpenRalphLauncher
 type SelectedModels = Map<string, string>
 
@@ -52,7 +52,7 @@ export function createTuiModule(runLauncher: RunLauncher = runOpenRalphLauncher)
             active = next
           }, (next) => {
             lastRun = next
-          }),
+          }, () => lastRun),
         },
       ],
       bindings: [],
@@ -81,8 +81,10 @@ function showModeSelect(
   getActive: () => TuiRunState | undefined,
   setActive: (run: TuiRunState | undefined) => void,
   setLastRun: (run: TuiRunState) => void,
+  getLastRun: () => TuiRunState | undefined,
 ): void {
   const stack = dialog ?? api.ui.dialog
+  const viewableRun = getActive() ?? getLastRun()
   stack.replace(() =>
     api.ui.DialogSelect<RalphMode>({
       title: "OpenRalph",
@@ -103,11 +105,25 @@ function showModeSelect(
           value: "build",
           description: "Implement planned work one task and commit at a time",
         },
+        ...(viewableRun
+          ? [
+              {
+                title: getActive() ? "View Active Run" : "View Last Run",
+                value: "view" as const,
+                description: `${viewableRun.phase} run: ${viewableRun.status}`,
+              },
+            ]
+          : []),
       ],
       onSelect: (option) => {
         stack.clear()
         if (option.value === "design") {
           promptForDesign(api, stack, options, getActive)
+          return
+        }
+        if (option.value === "view") {
+          const run = getActive() ?? getLastRun()
+          if (run) showOutputDialog(api, stack, run)
           return
         }
         promptForArgs(api, stack, option.value, options, selectedModels, runLauncher, getActive, setActive, setLastRun)
@@ -298,7 +314,20 @@ async function startTuiRun(
   } finally {
     clearRefreshTimer(run)
     if (getActive() === run) setActive(undefined)
+    notifyRunFinishedIfDetached(api, run)
   }
+}
+
+function notifyRunFinishedIfDetached(api: Parameters<TuiPlugin>[0], run: TuiRunState): void {
+  // With the output dialog closed a finished run would otherwise end invisibly;
+  // reattach later via the /ralph "View Last Run" entry.
+  if (run.dialog) return
+  api.ui.toast({
+    variant: run.status === "complete" ? "success" : run.status === "failed" ? "error" : "warning",
+    title: "OpenRalph",
+    message: `${run.phase} ${run.status}. Use /ralph "View Last Run" for details.`,
+    duration: 10000,
+  })
 }
 
 function withSelectedModelFallback(
