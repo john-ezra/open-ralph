@@ -488,6 +488,30 @@ describe("runOpenRalphLauncher", () => {
     expect(result.summary).toContain("stopped by user")
   })
 
+  test("accepts a non-zero container exit when the inner loop reported stopped", async () => {
+    const result = await runOpenRalphLauncher(
+      { phase: "build", rawArgs: "1", cwd: "/repo", options: { docker: { enabled: true } } },
+      {
+        env: {},
+        trust: noContainer,
+        commandExists: allCommandsExist,
+        inspectDockerImage: currentImage,
+        readPackageVersion: readCurrentVersion,
+        requireGitContext: async () => ({ root: "/repo", branch: "feature/test" }),
+        readWorktreeStatus: async () => [],
+        runDockerLoop: async () => ({
+          exitCode: 130,
+          signal: null,
+          stdout: "OpenRalph build stopped: stopped by user after 1 launched iteration(s)\nlaunched iterations: 1\n",
+          stderr: "",
+        }),
+      },
+    )
+
+    expect(result.status).toBe("stopped")
+    expect(result.summary).toContain("OpenRalph build stopped: stopped by user")
+  })
+
   test("surfaces blocked Docker runs without a generic Docker failure", async () => {
     const result = await runOpenRalphLauncher(
       { phase: "build", rawArgs: "1", cwd: "/repo", options: { docker: { enabled: true } } },

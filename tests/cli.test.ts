@@ -66,10 +66,19 @@ describe("runCli", () => {
     expect(exitCode).toBe(1)
   })
 
-  test("returns zero for stopped launcher summaries", async () => {
+  test("returns 130 for stopped launcher summaries", async () => {
     const exitCode = await runCli(["build", "1"], {
       stdout: { write: () => true },
       runLauncher: async () => ({ phase: "build", mode: "docker-host-launch", status: "stopped", summary: "OpenRalph build stopped: stopped by user" }),
+    })
+
+    expect(exitCode).toBe(130)
+  })
+
+  test("returns zero for max-reached launcher summaries", async () => {
+    const exitCode = await runCli(["build", "1"], {
+      stdout: { write: () => true },
+      runLauncher: async () => ({ phase: "build", mode: "host-explicit", status: "max-reached", summary: "OpenRalph build max-reached: reached max iterations (1)" }),
     })
 
     expect(exitCode).toBe(0)

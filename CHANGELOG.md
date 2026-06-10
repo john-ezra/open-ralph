@@ -18,6 +18,7 @@ The format is based on Keep a Changelog, and this project uses semantic versioni
 ### Added
 
 - Stopped runs after 3 consecutive blocked iterations without new commits, with a new `blocked` loop status that exits the CLI non-zero.
+- Exited the CLI with code 130 (128+SIGINT) for user-stopped runs so wrapping scripts do not mistake an interrupted run for a completed one; `max-reached` still exits 0 because bounded runs reach it intentionally.
 - Counted plan iterations that neither print the sentinel nor change `IMPLEMENTATION_PLAN.md` as failures so idle planning cannot loop forever.
 - Escalated SIGINT to SIGTERM/SIGKILL when an aborted child ignores the first signal, named loop containers, and force-killed the container on a second Ctrl+C in Docker mode.
 - Honored OpenRalph plugin options from the project `opencode.json` for CLI and TUI runs, with `OPENRALPH_OPTIONS_JSON` and TUI options taking per-key precedence.

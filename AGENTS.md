@@ -56,6 +56,7 @@ The server plugin should inject these commands only for authorized loop child pr
 - On first Ctrl+C, request shutdown, forward SIGINT to the active child process, and stop launching new iterations.
 - On second Ctrl+C, force terminate the active child process and exit.
 - User interrupt is not a child process failure and must not be retried.
+- CLI exit codes: 0 for complete and max-reached (bounded runs reach max intentionally), 1 for failed and blocked, 2 for usage errors, 130 for user-stopped runs.
 - Push only when `--push` is passed and Docker mode is not used.
 - Plan/build loops write project-local run artifacts under `runs/openralph-<phase>-YYYYMMDD-HHMMSS/`; artifacts must not replace `IMPLEMENTATION_PLAN.md` as the work queue.
 - Plan commits `IMPLEMENTATION_PLAN.md` automatically only after a child reports `RALPH_PLAN_COMPLETE`; planning children must not commit directly.

@@ -37,7 +37,12 @@ export async function runCli(argv = process.argv.slice(2), deps: CliDeps = {}): 
     }
     const result = await (deps.runLauncher ?? runOpenRalphLauncher)(input, { env: deps.env })
     stdout.write(`${result.summary}\n`)
-    return result.status === "failed" || result.status === "blocked" ? 1 : 0
+    // 130 follows the 128+SIGINT convention so wrapping scripts do not treat an
+    // interrupted run as a completed one. max-reached stays 0: bounded runs
+    // (e.g. the documented `build 1` smoke test) reach it intentionally.
+    if (result.status === "failed" || result.status === "blocked") return 1
+    if (result.status === "stopped") return 130
+    return 0
   } catch (error) {
     stderr.write(`OpenRalph failed: ${formatError(error)}\n`)
     return 1
