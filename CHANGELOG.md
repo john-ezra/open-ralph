@@ -6,6 +6,26 @@ The format is based on Keep a Changelog, and this project uses semantic versioni
 
 ## [Unreleased]
 
+### Fixed
+
+- Stopped launching a new child iteration when a stop request or abort arrives between iterations, and killed children spawned inside the stop window.
+- Read Ralph sentinels from stdout only, stripped ANSI escapes, and accepted sentinels only near the end of output so echoed prompts, quoted text, and stderr diagnostics can no longer complete or block a run.
+- Parsed Docker-mode results from the inner loop's stdout status line: heartbeat lines are no longer mistaken for summaries, and the launcher status now reflects `stopped`, `max-reached`, and `blocked` instead of always reporting `complete`.
+- Treated user-initiated Docker stops as a clean `stopped` outcome instead of a wrapped failure with exit code 1.
+- Masked symlinked `.env*` files whose targets resolve inside the repository, scanned build-output directories for `.env*` files (only `.git` and `node_modules` are skipped), and matched `.env` names case-insensitively.
+- Aligned `PROMPT_build.md` step 3a with the loop contract: plan-only refinements commit and print `RALPH_ITERATION_COMPLETE` instead of stopping without a sentinel.
+
+### Added
+
+- Stopped runs after 3 consecutive blocked iterations without new commits, with a new `blocked` loop status that exits the CLI non-zero.
+- Counted plan iterations that neither print the sentinel nor change `IMPLEMENTATION_PLAN.md` as failures so idle planning cannot loop forever.
+- Escalated SIGINT to SIGTERM/SIGKILL when an aborted child ignores the first signal, named loop containers, and force-killed the container on a second Ctrl+C in Docker mode.
+- Honored OpenRalph plugin options from the project `opencode.json` for CLI and TUI runs, with `OPENRALPH_OPTIONS_JSON` and TUI options taking per-key precedence.
+- Added a `/ralph` "View Active/Last Run" menu entry and a completion toast when a run finishes while the output viewer is closed.
+- Added a CI workflow running `bun run validate` on pushes and pull requests, and gated Docker image publishing on the same validation.
+- Extended the release check with package.json/CHANGELOG version consistency and detection of home-directory paths from any developer machine.
+- Added sentinel-hygiene guardrails to `PROMPT_plan.md`.
+
 ## [0.3.4] - 2026-06-06
 
 ### Fixed

@@ -14,7 +14,24 @@ env:
   IMAGE_NAME: ghcr.io/john-ezra/open-ralph
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Validate (typecheck, tests, release check)
+        run: bun run validate
+
   docker-image:
+    needs: validate
     runs-on: ubuntu-latest
 
     steps:

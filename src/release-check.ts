@@ -19,7 +19,13 @@ export interface ForbiddenPathMarker {
 export interface ReleaseCheckResult {
   files: string[]
   findings: ReleaseCheckFinding[]
+  versionIssues: string[]
 }
+
+// Catches home-directory paths from any contributor machine, not just the
+// machine running the check. Container and test-fixture users are expected.
+const GENERIC_HOME_PATTERN = /\/(?:home|Users)\/([A-Za-z0-9._-]+)/g
+const ALLOWED_HOME_USERS = new Set(["opencode", "example", "runner"])
 
 interface NpmPackFile {
   path?: string
@@ -33,7 +39,39 @@ export async function runReleaseCheck(cwd = process.cwd()): Promise<ReleaseCheck
   const [trackedFiles, packedFiles] = await Promise.all([listGitTrackedFiles(cwd), listNpmPackFiles(cwd)])
   const files = uniqueSorted([...trackedFiles, ...packedFiles])
   const findings = await scanFilesForForbiddenPaths(cwd, files, buildForbiddenPathMarkers(cwd))
-  return { files, findings }
+  const versionIssues = await checkReleaseVersionConsistency(cwd)
+  return { files, findings, versionIssues }
+}
+
+export async function checkReleaseVersionConsistency(cwd: string): Promise<string[]> {
+  const issues: string[] = []
+
+  let version: string | undefined
+  try {
+    const parsed = JSON.parse(await readFile(join(cwd, "package.json"), "utf8")) as { version?: unknown }
+    version = typeof parsed.version === "string" ? parsed.version : undefined
+  } catch {
+    issues.push("package.json could not be read or parsed")
+  }
+  if (version === undefined && issues.length === 0) issues.push("package.json does not contain a string version")
+
+  let changelog: string | undefined
+  try {
+    changelog = await readFile(join(cwd, "CHANGELOG.md"), "utf8")
+  } catch {
+    issues.push("CHANGELOG.md could not be read")
+  }
+
+  if (version && changelog) {
+    const match = changelog.match(/^## \[(\d+\.\d+\.\d+[^\]]*)\]/m)
+    if (!match) {
+      issues.push("CHANGELOG.md has no '## [x.y.z]' release heading")
+    } else if (match[1] !== version) {
+      issues.push(`package.json version ${version} does not match the latest CHANGELOG.md release heading ${match[1]}`)
+    }
+  }
+
+  return issues
 }
 
 export function buildForbiddenPathMarkers(projectRoot: string, home = homedir()): ForbiddenPathMarker[] {
@@ -67,11 +105,25 @@ export async function scanFilesForForbiddenPaths(
 
     const lines = content.toString("utf8").split(/\r?\n/)
     for (let index = 0; index < lines.length; index += 1) {
+      let matched = false
       for (const marker of markers) {
         if (lines[index].includes(marker.value)) {
           findings.push({ file, line: index + 1, reason: marker.reason, marker: marker.value })
+          matched = true
           break
         }
+      }
+      if (matched) continue
+
+      for (const match of lines[index].matchAll(GENERIC_HOME_PATTERN)) {
+        if (ALLOWED_HOME_USERS.has(match[1])) continue
+        findings.push({
+          file,
+          line: index + 1,
+          reason: "home directory path from a developer machine",
+          marker: match[0],
+        })
+        break
       }
     }
   }
@@ -132,6 +184,11 @@ if (import.meta.main) {
     const result = await runReleaseCheck()
     if (result.findings.length > 0) {
       process.stderr.write(`${formatFindings(result.findings)}\n`)
+      process.exit(1)
+    }
+
+    if (result.versionIssues.length > 0) {
+      process.stderr.write(`Release version check failed:\n${result.versionIssues.map((issue) => `  ${issue}`).join("\n")}\n`)
       process.exit(1)
     }
 
