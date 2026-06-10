@@ -11,7 +11,7 @@
 
 3. Implement exactly one coherent task from the plan. Keep the change complete, minimal, and consistent with existing project patterns.
 
-3a. If the chosen task is too large or unclear to complete cleanly in one iteration, split or clarify it in `IMPLEMENTATION_PLAN.md`, document what should happen next, and stop rather than doing a partial implementation.
+3a. If the chosen task is too large or unclear to complete cleanly in one iteration, split or clarify it in `IMPLEMENTATION_PLAN.md`, document what should happen next, and stop rather than doing a partial implementation. Commit the plan-only refinement and print `RALPH_ITERATION_COMPLETE` as the standalone final line so the loop records progress instead of counting this iteration as a failure.
 
 4. Run the relevant validation from `AGENTS.md`, including targeted tests for the changed unit when available. Use only 1 validation subagent at a time for build/tests so validation creates clear backpressure. Fix failures caused by the change before proceeding.
 

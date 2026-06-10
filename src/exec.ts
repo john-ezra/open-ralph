@@ -26,7 +26,10 @@ export interface StartCommandOptions {
   captureOutput?: boolean
   onOutput?: (event: CommandOutputEvent) => void
   signal?: AbortSignal
+  abortKillEscalationMs?: number
 }
+
+const DEFAULT_ABORT_KILL_ESCALATION_MS = 10_000
 
 export function runCommand(command: string, args: string[], cwd: string): Promise<CommandResult> {
   return startCommand(command, args, { cwd, streamOutput: false }).result
@@ -54,7 +57,24 @@ export function startCommand(command: string, args: string[], options: StartComm
   let stdout = ""
   let stderr = ""
 
-  const abort = () => child.kill("SIGINT")
+  // On abort, ask politely first, then escalate so a child that ignores SIGINT
+  // cannot hang the caller (and its embedder) forever.
+  let escalationTimers: ReturnType<typeof setTimeout>[] = []
+  const clearEscalation = () => {
+    for (const timer of escalationTimers) clearTimeout(timer)
+    escalationTimers = []
+  }
+  const abort = () => {
+    child.kill("SIGINT")
+    const graceMs = options.abortKillEscalationMs ?? DEFAULT_ABORT_KILL_ESCALATION_MS
+    if (graceMs > 0 && escalationTimers.length === 0) {
+      escalationTimers = [
+        setTimeout(() => child.kill("SIGTERM"), graceMs),
+        setTimeout(() => child.kill("SIGKILL"), graceMs * 2),
+      ]
+      for (const timer of escalationTimers) timer.unref?.()
+    }
+  }
   if (options.signal?.aborted) abort()
   else options.signal?.addEventListener("abort", abort, { once: true })
 
@@ -75,10 +95,12 @@ export function startCommand(command: string, args: string[], options: StartComm
   const result = new Promise<CommandResult>((resolve, reject) => {
     child.on("error", (error) => {
       options.signal?.removeEventListener("abort", abort)
+      clearEscalation()
       reject(error)
     })
     child.on("close", (exitCode, signal) => {
       options.signal?.removeEventListener("abort", abort)
+      clearEscalation()
       resolve({ exitCode, signal, stdout, stderr })
     })
   })

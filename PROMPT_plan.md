@@ -29,3 +29,5 @@ When the specs, current code, and existing `IMPLEMENTATION_PLAN.md` have already
 RALPH_PLAN_COMPLETE
 
 If more planning work remains, update `IMPLEMENTATION_PLAN.md` and exit without printing a completion sentinel so the outer loop can continue.
+
+Print the completion sentinel only as a standalone final output line. Do not use Ralph sentinel strings in todos, prose, quoted text, or examples; reserve exactly one standalone sentinel for the final output line.

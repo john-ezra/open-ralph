@@ -34,7 +34,7 @@ export interface RunLoopInput {
 
 export interface LoopSummary {
   phase: LoopPhase
-  status: "complete" | "max-reached" | "failed" | "stopped"
+  status: "complete" | "max-reached" | "failed" | "stopped" | "blocked"
   message: string
   launched: number
   tagged: number
@@ -70,6 +70,7 @@ export async function runLoop(input: RunLoopInput): Promise<LoopSummary> {
     launched: 0,
     tagged: 0,
     blocked: 0,
+    consecutiveBlocked: 0,
     consecutiveFailures: 0,
     lastFailure: undefined as string | undefined,
     stopRequested: false,
@@ -164,6 +165,9 @@ export async function runLoop(input: RunLoopInput): Promise<LoopSummary> {
       const beforeGitInfoExclude = input.phase === "build" ? await readGitInfoExclude(git.root) : undefined
       const beforeImplementationPlan = input.phase === "plan" ? await readImplementationPlanSnapshot(git.root) : undefined
       const childArgs = buildChildArgs(input.phase, git.root, model)
+      if (state.stopRequested || input.signal?.aborted) {
+        return finish("stopped", `stopped by user after ${state.launched} launched iteration(s)`)
+      }
       state.launched += 1
       const iterationArtifacts = await startIterationArtifacts(artifacts, state.launched, childArgs)
 
@@ -190,6 +194,9 @@ export async function runLoop(input: RunLoopInput): Promise<LoopSummary> {
         })
         activeChild = child.child
         state.activeChild = child.child
+        if (state.stopRequested || input.signal?.aborted) {
+          child.child.kill(state.forceStopRequested ? "SIGKILL" : "SIGINT")
+        }
         child.child.once("spawn", () => {
           if (state.activeChild !== child.child || state.stopRequested || input.signal?.aborted) return
           heartbeat = startChildHeartbeat({
@@ -227,7 +234,9 @@ export async function runLoop(input: RunLoopInput): Promise<LoopSummary> {
         continue
       }
 
-      const output = `${result.stdout}\n${result.stderr}`
+      // Sentinels are read from stdout only; stderr carries heartbeat/diagnostic
+      // lines and must never satisfy or spoof a completion sentinel.
+      const sentinelOutput = result.stdout
 
       if (state.stopRequested || state.forceStopRequested || input.signal?.aborted) {
         await iterationArtifacts.finish({ result, status: "stopped by user" })
@@ -242,14 +251,14 @@ export async function runLoop(input: RunLoopInput): Promise<LoopSummary> {
       }
 
       if (input.phase === "plan") {
-        const planComplete = isPlanComplete(output)
+        const planComplete = isPlanComplete(sentinelOutput)
         const planChanged = beforeImplementationPlan !== (await readImplementationPlanSnapshot(git.root))
         const acceptsCompletion = planComplete && !planChanged
         const status = planComplete && planChanged ? "planning continues; plan changed during iteration" : planComplete ? "planning complete" : "planning continues"
         await iterationArtifacts.finish({ result, status, sentinel: planComplete ? "RALPH_PLAN_COMPLETE" : undefined })
-        state.consecutiveFailures = 0
-        state.lastFailure = undefined
         if (acceptsCompletion) {
+          state.consecutiveFailures = 0
+          state.lastFailure = undefined
           let planCommitted = false
           try {
             planCommitted = await commitImplementationPlanIfChanged(git.root)
@@ -260,10 +269,26 @@ export async function runLoop(input: RunLoopInput): Promise<LoopSummary> {
           await warnIfDirtyAfterPlanning(git.root, warnings, streamOutput)
           return finish("complete", planCommitted ? `planning complete; committed ${IMPLEMENTATION_PLAN_PATH}` : "planning complete")
         }
+
+        if (planChanged) {
+          state.consecutiveFailures = 0
+          state.lastFailure = undefined
+          continue
+        }
+
+        // A clean exit that neither printed the sentinel nor changed the plan is
+        // no progress; without backpressure an idle model loops forever.
+        const failed = recordFailure(
+          input.phase,
+          state,
+          `plan child exited successfully without printing RALPH_PLAN_COMPLETE or changing ${IMPLEMENTATION_PLAN_PATH}`,
+          streamOutput,
+        )
+        if (failed) return finish("failed", failed)
         continue
       }
 
-      const sentinel = detectBuildSentinel(output)
+      const sentinel = detectBuildSentinel(sentinelOutput)
       if (beforeGitInfoExclude !== undefined && (await readGitInfoExclude(git.root)) !== beforeGitInfoExclude) {
         await iterationArtifacts.finish({
           result,
@@ -294,6 +319,14 @@ export async function runLoop(input: RunLoopInput): Promise<LoopSummary> {
         state.consecutiveFailures = 0
         state.lastFailure = undefined
         state.blocked += 1
+        const afterHead = await getHead(git.root)
+        state.consecutiveBlocked = afterHead && afterHead !== beforeHead ? 1 : state.consecutiveBlocked + 1
+        if (state.consecutiveBlocked >= 3) {
+          return finish(
+            "blocked",
+            "stopped after 3 consecutive blocked iterations without new commits; resolve the blocker documented in IMPLEMENTATION_PLAN.md and rerun",
+          )
+        }
         continue
       }
 
@@ -315,6 +348,7 @@ export async function runLoop(input: RunLoopInput): Promise<LoopSummary> {
 
       state.consecutiveFailures = 0
       state.lastFailure = undefined
+      state.consecutiveBlocked = 0
     }
 
     return finish("stopped", `stopped by user after ${state.launched} launched iteration(s)`)

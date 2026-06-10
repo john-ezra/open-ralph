@@ -205,6 +205,114 @@ describe("runLoop build completion", () => {
   })
 })
 
+describe("runLoop failure handling", () => {
+  test("stops after 3 consecutive child failures", async () => {
+    await withFakeOpenCode("child-fail", async (root) => {
+      const summary = await runBuild(root, "")
+
+      expect(summary.status).toBe("failed")
+      expect(summary.launched).toBe(3)
+      expect(summary.message).toContain("3 consecutive child failures")
+      expect(summary.message).toContain("exit code 1")
+    })
+  })
+
+  test("treats a clean build exit without a sentinel as a failure", async () => {
+    await withFakeOpenCode("build-no-sentinel", async (root) => {
+      const summary = await runBuild(root, "")
+
+      expect(summary.status).toBe("failed")
+      expect(summary.launched).toBe(3)
+      expect(summary.message).toContain("without a Ralph sentinel")
+    })
+  })
+
+  test("fails iteration completion that did not create a commit", async () => {
+    await withFakeOpenCode("iteration-no-commit", async (root) => {
+      const summary = await runBuild(root, "")
+
+      expect(summary.status).toBe("failed")
+      expect(summary.launched).toBe(3)
+      expect(summary.message).toContain("did not create a new commit")
+    })
+  })
+
+  test("stops blocked runs after 3 consecutive blocked iterations", async () => {
+    await withFakeOpenCode("build-blocked", async (root) => {
+      const summary = await runBuild(root, "")
+
+      expect(summary.status).toBe("blocked")
+      expect(summary.launched).toBe(3)
+      expect(summary.blocked).toBe(3)
+      expect(summary.message).toContain("3 consecutive blocked iterations")
+    })
+  })
+
+  test("fails plan iterations with no sentinel and no plan change", async () => {
+    await withFakeOpenCode("plan-no-progress", async (root) => {
+      const summary = await runPlan(root, "")
+
+      expect(summary.status).toBe("failed")
+      expect(summary.launched).toBe(3)
+      expect(summary.message).toContain("without printing RALPH_PLAN_COMPLETE")
+    })
+  })
+
+  test("stops cleanly at max iterations after committed work", async () => {
+    await withFakeOpenCode("iterate-commit", async (root) => {
+      const summary = await runBuild(root, "2")
+
+      expect(summary.status).toBe("max-reached")
+      expect(summary.launched).toBe(2)
+      expect(summary.tagged).toBe(2)
+    })
+  })
+})
+
+describe("runLoop sentinel hygiene", () => {
+  test("ignores plan sentinels that are not near the end of stdout", async () => {
+    await withFakeOpenCode("plan-echo", async (root) => {
+      const summary = await runPlan(root, "1")
+
+      expect(summary.status).toBe("failed")
+      expect(summary.message).toContain("without printing RALPH_PLAN_COMPLETE")
+    })
+  })
+
+  test("ignores plan sentinels printed to stderr", async () => {
+    await withFakeOpenCode("plan-stderr-sentinel", async (root) => {
+      const summary = await runPlan(root, "1")
+
+      expect(summary.status).toBe("failed")
+      expect(summary.message).toContain("without printing RALPH_PLAN_COMPLETE")
+    })
+  })
+})
+
+describe("runLoop cancellation", () => {
+  test("stops on abort without launching another iteration", async () => {
+    await withFakeOpenCode("build-slow", async (root) => {
+      const controller = new AbortController()
+      const summary = await runLoop({
+        phase: "build",
+        rawArgs: "",
+        cwd: root,
+        options: {},
+        streamOutput: false,
+        signal: controller.signal,
+        heartbeatIntervalMs: 50,
+        onOutput: () => {
+          if (!controller.signal.aborted) controller.abort()
+        },
+      })
+
+      expect(summary.status).toBe("stopped")
+      expect(summary.launched).toBe(1)
+      expect(summary.message).toContain("stopped by user")
+    })
+  })
+})
+
 async function runPlan(root: string, rawArgs = "1"): Promise<LoopSummary> {
   return runLoop({ phase: "plan", rawArgs, cwd: root, options: {}, streamOutput: false })
 }
@@ -294,6 +402,41 @@ case "\${OPENRALPH_TEST_SCENARIO:-}" in
     ;;
   complete-clean)
     printf 'RALPH_COMPLETE\n'
+    ;;
+  child-fail)
+    printf 'iteration exploded\n' >&2
+    exit 1
+    ;;
+  build-no-sentinel)
+    printf 'did some work but forgot the sentinel\n'
+    ;;
+  build-blocked)
+    printf 'RALPH_BLOCKED\n'
+    ;;
+  plan-no-progress)
+    printf 'studied the specs, changed nothing\n'
+    ;;
+  plan-echo)
+    printf 'RALPH_PLAN_COMPLETE\n'
+    for i in $(seq 1 12); do
+      printf 'trailing line %s\n' "$i"
+    done
+    ;;
+  plan-stderr-sentinel)
+    printf 'RALPH_PLAN_COMPLETE\n' >&2
+    ;;
+  iteration-no-commit)
+    printf 'RALPH_ITERATION_COMPLETE\n'
+    ;;
+  iterate-commit)
+    printf 'work\n' >> result.txt
+    git add result.txt
+    git commit -m 'Iteration work' >/dev/null
+    printf 'RALPH_ITERATION_COMPLETE\n'
+    ;;
+  build-slow)
+    sleep 5
+    printf 'RALPH_BLOCKED\n'
     ;;
   complete-dirty)
     printf 'RALPH_COMPLETE\n'
